@@ -1,5 +1,5 @@
 """
-Gmail Service Helpers
+GMail Service Helpers
 ---------------------
 Shared utility functions: security, filters, email parsing, and rate-limit retries.
 """
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def is_retryable_gmail_error(err: Exception) -> bool:
-    """Return True if an exception is a Gmail rate limit or transient server error."""
+    """Return True if an exception is a GMail rate limit or transient server error."""
     if isinstance(err, HttpError):
         status = getattr(err.resp, "status", None)
         if status in (429, 500, 502, 503, 504):
@@ -39,7 +39,7 @@ def execute_with_backoff(
     max_retries: int = 6,
     status_dict: Optional[dict] = None,
 ) -> Any:
-    """Execute a Gmail API request with exponential backoff on rate limits."""
+    """Execute a GMail API request with exponential backoff on rate limits."""
     for attempt in range(max_retries + 1):
         try:
             return request_fn()
@@ -49,12 +49,12 @@ def execute_with_backoff(
 
             wait = min(60.0, 3.0 * (2**attempt)) + random.uniform(0.5, 2.0)
             logger.warning(
-                f"Gmail API rate limit/transient error (attempt {attempt + 1}/{max_retries}): "
+                f"GMail API rate limit/transient error (attempt {attempt + 1}/{max_retries}): "
                 f"sleeping {wait:.1f}s - {e}"
             )
             if status_dict is not None:
                 status_dict["message"] = (
-                    f"Gmail rate limit hit — pausing {int(wait)}s before retrying..."
+                    f"GMail rate limit hit — pausing {int(wait)}s before retrying..."
                 )
             time.sleep(wait)
 
@@ -70,7 +70,7 @@ def execute_batch_with_retry(
     max_retries: int = 6,
     progress_cb: Optional[Callable[[int, int], None]] = None,
 ) -> None:
-    """Execute Gmail batch requests with gentle pacing and automatic per-item retries."""
+    """Execute GMail batch requests with gentle pacing and automatic per-item retries."""
     total = len(items)
     completed = 0
 
@@ -118,11 +118,11 @@ def execute_batch_with_retry(
 
             wait = min(60.0, 4.0 * (2**attempt)) + random.uniform(0.5, 2.0)
             logger.warning(
-                f"Batch hit Gmail rate limit on {len(retry_items)} items — pausing {wait:.1f}s"
+                f"Batch hit GMail rate limit on {len(retry_items)} items — pausing {wait:.1f}s"
             )
             if status_dict is not None:
                 status_dict["message"] = (
-                    f"Gmail rate limit hit — pausing {int(wait)}s ({completed}/{total} done)..."
+                    f"GMail rate limit hit — pausing {int(wait)}s ({completed}/{total} done)..."
                 )
             time.sleep(wait)
             to_send = retry_items
@@ -189,7 +189,7 @@ def validate_unsafe_url(url: str) -> str:
 
 
 def build_gmail_query(filters: Optional[Union[dict, Any]] = None) -> str:
-    """Build Gmail search query from filter parameters."""
+    """Build GMail search query from filter parameters."""
     if not filters:
         return ""
 
