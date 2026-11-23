@@ -103,7 +103,12 @@ GmailCleaner.Delete = {
                 if (!status.error) {
                     const resultsResponse = await fetch('/api/delete-scan-results');
                     GmailCleaner.deleteResults = await resultsResponse.json();
-                    this.displayResults();
+                    const mode = GmailCleaner.deleteResults[0]?.group_type;
+                    const sortEl = document.getElementById('deleteSortBy');
+                    if (sortEl && mode === 'individual') {
+                        sortEl.value = 'size';
+                    }
+                    this.resortAndDisplay();
                 } else {
                     alert('Error: ' + status.error);
                 }
@@ -128,6 +133,20 @@ GmailCleaner.Delete = {
         `;
     },
 
+    resortAndDisplay() {
+        const sortBy = document.getElementById('deleteSortBy')?.value || 'count';
+        if (GmailCleaner.deleteResults && GmailCleaner.deleteResults.length > 0) {
+            GmailCleaner.deleteResults.sort((a, b) => {
+                if (sortBy === 'size') {
+                    return (b.total_size || 0) - (a.total_size || 0);
+                }
+                const countDiff = (b.count || 0) - (a.count || 0);
+                return countDiff !== 0 ? countDiff : (b.total_size || 0) - (a.total_size || 0);
+            });
+        }
+        this.displayResults();
+    },
+
     displayResults() {
         const resultsList = document.getElementById('deleteResultsList');
         const resultsSection = document.getElementById('deleteResultsSection');
@@ -144,10 +163,13 @@ GmailCleaner.Delete = {
             return;
         }
 
-        const isSubjectMode = GmailCleaner.deleteResults[0]?.group_type === 'subject';
+        const mode = GmailCleaner.deleteResults[0]?.group_type || 'sender';
+        const isSenderOnlyDisabled = mode !== 'sender';
         resultsSection.classList.remove('hidden');
         noResults.classList.add('hidden');
-        this.setActionButtonsEnabled(true, isSubjectMode);
+        this.setActionButtonsEnabled(true, isSenderOnlyDisabled);
+
+        const activeEmail = GmailCleaner.Auth?.currentEmail || '';
 
         GmailCleaner.deleteResults.forEach((r, i) => {
             const item = document.createElement('div');
@@ -156,6 +178,18 @@ GmailCleaner.Delete = {
             const dateRange = this.formatDateRange(r.first_date, r.last_date);
             const dateRangeDisplay = dateRange ? `<div class="result-date-range">${dateRange}</div>` : '';
             const title = r.display_title || r.email;
+            const sizeStr = GmailCleaner.UI.formatSize(r.total_size);
+            const sizeBadge = sizeStr ? `<span class="result-count">${sizeStr}</span>` : '';
+            const countBadge = mode === 'individual' ? '' : `<span class="result-count">${r.count} emails</span>`;
+
+            let openLink = '';
+            if (mode === 'individual' && r.message_id) {
+                const authParam = activeEmail ? `?authuser=${encodeURIComponent(activeEmail)}` : '';
+                const gmailUrl = `https://mail.google.com/mail/${authParam}#all/${encodeURIComponent(r.message_id)}`;
+                openLink = `<a href="${gmailUrl}" target="_blank" rel="noopener" class="link-btn">Open</a>`;
+            }
+
+            const btnText = mode === 'individual' ? 'Delete' : `Delete ${r.count}`;
 
             item.innerHTML = `
                 <label class="checkbox-wrapper result-checkbox">
@@ -163,16 +197,18 @@ GmailCleaner.Delete = {
                     <span class="checkmark"></span>
                 </label>
                 <div class="result-content">
-                    <div class="result-sender">${GmailCleaner.UI.escapeHtml(title)}</div>
-                    <div class="result-subject">${GmailCleaner.UI.escapeHtml(r.subjects[0] || 'No subject')}</div>
+                    <div class="result-sender" title="${GmailCleaner.UI.escapeHtml(title)}">${GmailCleaner.UI.escapeHtml(title)}</div>
+                    <div class="result-subject" title="${GmailCleaner.UI.escapeHtml(r.subjects[0] || '')}">${GmailCleaner.UI.escapeHtml(r.subjects[0] || 'No subject')}</div>
                     <div class="result-meta">
                         ${dateRangeDisplay}
-                        <span class="result-count">${r.count} emails</span>
+                        ${countBadge}
+                        ${sizeBadge}
                     </div>
                 </div>
                 <div class="result-actions">
+                    ${openLink}
                     <button class="unsub-btn delete-btn" id="delete-${i}" onclick="GmailCleaner.Delete.deleteSenderEmails(${i})">
-                        Delete ${r.count}
+                        ${btnText}
                     </button>
                 </div>
             `;
@@ -180,7 +216,7 @@ GmailCleaner.Delete = {
         });
     },
 
-    setActionButtonsEnabled(enabled, subjectMode = false) {
+    setActionButtonsEnabled(enabled, senderOnlyDisabled = false) {
         const senderOnlyButtons = [
             'applyLabelBtn',
             'archiveBtn',
@@ -190,7 +226,7 @@ GmailCleaner.Delete = {
         senderOnlyButtons.forEach(id => {
             const btn = document.getElementById(id);
             if (btn) {
-                btn.disabled = !enabled || subjectMode;
+                btn.disabled = !enabled || senderOnlyDisabled;
             }
         });
         const deleteBtn = document.getElementById('deleteSelectedBtn');
@@ -210,8 +246,14 @@ GmailCleaner.Delete = {
         const r = GmailCleaner.deleteResults[index];
         const btn = document.getElementById('delete-' + index);
         const title = r.display_title || r.email;
+        const mode = r.group_type || 'sender';
+        const btnResetText = mode === 'individual' ? 'Delete' : `Delete ${r.count}`;
 
-        if (!confirm(`Delete ALL ${r.count} emails for "${title}"?\n\nThis will move them to Trash.`)) {
+        const promptText = mode === 'individual'
+            ? `Delete this email "${title}"?\n\nThis will move it to GMail Trash.`
+            : `Delete ALL ${r.count} emails for "${title}"?\n\nThis will move them to GMail Trash.`;
+
+        if (!confirm(promptText)) {
             return;
         }
 
@@ -239,26 +281,25 @@ GmailCleaner.Delete = {
                 setTimeout(() => {
                     GmailCleaner.deleteResults = GmailCleaner.deleteResults.filter((_, i) => i !== index);
                     this.displayResults();
-                }, 1000);
+                }, 800);
             } else {
                 btn.classList.remove('btn-deleting');
-                btn.innerHTML = 'Error';
                 alert('Error: ' + result.message);
                 btn.disabled = false;
-                btn.innerHTML = `Delete ${r.count}`;
+                btn.innerHTML = btnResetText;
             }
         } catch (error) {
             alert('Error: ' + error.message);
             btn.classList.remove('btn-deleting');
             btn.disabled = false;
-            btn.innerHTML = `Delete ${r.count}`;
+            btn.innerHTML = btnResetText;
         }
     },
 
     async deleteSelected() {
         const checkboxes = document.querySelectorAll('.delete-cb:checked');
         if (checkboxes.length === 0) {
-            alert('Please select at least one item to delete emails from.');
+            alert('Please select at least one item to delete.');
             return;
         }
 
@@ -271,10 +312,12 @@ GmailCleaner.Delete = {
             senderEmails.push(r.email);
         });
 
-        const isSubjectMode = GmailCleaner.deleteResults[0]?.group_type === 'subject';
-        const unit = isSubjectMode ? 'repeated subject groups' : 'senders';
+        const mode = GmailCleaner.deleteResults[0]?.group_type || 'sender';
+        const confirmMsg = mode === 'individual'
+            ? `Delete ${totalEmails} selected email(s)?\n\nThis will move them to GMail Trash.`
+            : `Delete ${totalEmails} emails across ${checkboxes.length} ${mode === 'subject' ? 'repeated subject groups' : 'senders'}?\n\nThis will move them to GMail Trash.`;
 
-        if (!confirm(`Delete ${totalEmails} emails across ${checkboxes.length} ${unit}?\n\nThis will move them to Trash.`)) {
+        if (!confirm(confirmMsg)) {
             return;
         }
 
@@ -333,21 +376,12 @@ GmailCleaner.Delete = {
                     setTimeout(async () => {
                         const resultsResponse = await fetch('/api/delete-scan-results');
                         GmailCleaner.deleteResults = await resultsResponse.json();
-                        this.displayResults();
+                        this.resortAndDisplay();
                         document.getElementById('deleteSelectAll').checked = false;
                     }, 800);
                 } else {
                     alert('Error: ' + status.error);
-                    checkboxes.forEach(cb => {
-                        const index = parseInt(cb.dataset.index);
-                        const r = GmailCleaner.deleteResults[index];
-                        const btn = document.getElementById('delete-' + index);
-                        if (btn) {
-                            btn.classList.remove('btn-deleting');
-                            btn.disabled = false;
-                            btn.innerHTML = `Delete ${r.count}`;
-                        }
-                    });
+                    this.displayResults();
                 }
             } else {
                 setTimeout(() => this.pollDeleteProgress(checkboxes), 300);
@@ -373,7 +407,7 @@ GmailCleaner.Delete = {
                     <div class="delete-progress-bar" id="deleteBulkProgressBar"></div>
                 </div>
                 <p id="deleteBulkProgressText">Starting deletion...</p>
-                <p class="delete-stats" id="deleteBulkStats">0/${senderCount} groups | 0 emails deleted</p>
+                <p class="delete-stats" id="deleteBulkStats">0/${senderCount} items | 0 emails deleted</p>
             </div>
         `;
         overlay.dataset.totalSenders = senderCount;
