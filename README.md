@@ -1,21 +1,21 @@
-# GMail Cleaner — Multi-Account Fork
+# GMail Cleaner — Multi-Account Fork [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-filtroman-ffdd00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/filtroman)
 
 > **Attribution & AI-Driven Disclosure**
 >
-> * **Original Creator:** Forked from [**Gururagavendra/gmail-cleaner**](https://github.com/Gururagavendra/gmail-cleaner) by **Gururagavendra** `[1.1]`. All core GMail cleaning features, UI/UX, and architecture belong to the original author. If this tool helps you, please star the [original repository](https://github.com/Gururagavendra/gmail-cleaner) and consider [supporting the original creator](https://buymeacoffee.com/gururagavendra) `[1.1]`.
+> * **Original Creator:** Forked from [**Gururagavendra/gmail-cleaner**](https://github.com/Gururagavendra/gmail-cleaner) by **Gururagavendra**. All core GMail cleaning features, UI/UX, and architecture belong to the original author. If this tool helps you, please star the [original repository](https://github.com/Gururagavendra/gmail-cleaner) and consider [supporting the original creator](https://buymeacoffee.com/gururagavendra).
 > * **100% AI-Driven Fork:** **All modifications, refactors, bug fixes, and updated documentation in this fork are 100% AI-driven.** Please review the source code before deploying in sensitive environments and use at your own discretion.
 
-A fast, self-hosted, GMail-styled web app to bulk unsubscribe from newsletters, delete emails by sender or repeated subject, organize labels, and clean up multiple GMail accounts from a single Docker container `[1.1]`.
+A fast, self-hosted, GMail-styled web app to bulk unsubscribe from newsletters, delete emails by sender or repeated subject, organize labels, and clean up multiple GMail accounts from a single Docker container.
 
 ---
 
 ## Features
 
 ### Core Features (from Upstream)
-* **Bulk Unsubscribe:** Scans emails for `List-Unsubscribe` headers, supports one-click RFC 8058 unsubscribe, and provides direct links for manual unsubscribes `[1.1]`.
-* **Bulk Delete by Sender:** Groups senders by email count so you can trash thousands of unwanted emails in seconds (recoverable from GMail Trash for 30 days) `[1.1]`.
-* **Organize & Export:** Apply/remove GMail labels, archive emails, mark/unmark as important, mark unread emails as read in bulk, and export selected senders' email metadata to CSV `[1.1]`.
-* **Smart Global Filters:** Filter by *Older than*, *Custom Date Range*, *Larger than*, *Category* (Promotions, Social, Updates, Forums, Primary), *From Sender*, and *Label* `[1.1]`.
+* **Bulk Unsubscribe:** Scans emails for `List-Unsubscribe` headers, supports one-click RFC 8058 unsubscribe, and provides direct links for manual unsubscribes.
+* **Bulk Delete by Sender:** Groups senders by email count so you can trash thousands of unwanted emails in seconds (recoverable from GMail Trash for 30 days).
+* **Organize & Export:** Apply/remove GMail labels, archive emails, mark/unmark as important, mark unread emails as read in bulk, and export selected senders' email metadata to CSV.
+* **Smart Global Filters:** Filter by *Older than*, *Custom Date Range*, *Larger than*, *Category* (Promotions, Social, Updates, Forums, Primary), *From Sender*, and *Label*.
 
 ### Added in This Fork
 * **Multi-Account Switcher:** Connect multiple GMail accounts via **+ Add Account**, switch between them using the header dropdown, or sign out of individual accounts. Tokens are saved per account in `./data/tokens/` with an `./data/accounts.json` index.
@@ -28,10 +28,10 @@ A fast, self-hosted, GMail-styled web app to bulk unsubscribe from newsletters, 
 ## Quick Start
 
 ### Step 1: Google Cloud Setup (Required)
-1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create or select a project `[1.1]`.
-2. Enable the **GMail API** (`APIs & Services` -> `Library` -> search **GMail API** -> **Enable`) `[1.1]`.
-3. Configure **Google Auth Platform** -> **Audience** -> add **every GMail address** you plan to clean under **Test users** `[1.1]`.
-4. Go to **Clients** -> **Create Client** -> choose **Web application** `[1.1]`.
+1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create or select a project.
+2. Enable the **GMail API** (`APIs & Services` -> `Library` -> search **GMail API** -> **Enable`).
+3. Configure **Google Auth Platform** -> **Audience** -> add **every GMail address** you plan to clean under **Test users**.
+4. Go to **Clients** -> **Create Client** -> choose **Web application**.
 5. Under **Authorized redirect URIs**, add your callback URL:
    * Behind Cloudflare Tunnel / reverse proxy:
      ```text
@@ -41,7 +41,7 @@ A fast, self-hosted, GMail-styled web app to bulk unsubscribe from newsletters, 
      ```text
      http://localhost:8766/oauth/callback
      ```
-6. Download the JSON file, rename it to **`credentials.json`**, and place it in the project root `[1.1]`.
+6. Download the JSON file, rename it to **`credentials.json`**, and place it in the project root.
 
 ---
 
@@ -76,7 +76,7 @@ Build and start:
 docker compose up -d --build
 ```
 
-Open `https://gmail.yourdomain.com` (or `http://localhost:8766`) and click **Sign in with Google** `[1.1]`.
+Open `https://gmail.yourdomain.com` (or `http://localhost:8766`) and click **Sign in with Google**.
 
 ---
 
@@ -89,7 +89,7 @@ cd gmail-cleaner-multiuser
 uv run python main.py
 ```
 
-Open `http://localhost:8766` in your browser `[1.1]`.
+Open `http://localhost:8766` in your browser.
 
 ---
 
@@ -99,8 +99,8 @@ Open `http://localhost:8766` in your browser `[1.1]`.
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
-| `PORT` | `8766` | Web UI and `/oauth/callback` server port `[1.1]` |
-| `WEB_AUTH` | `false` (`true` in Docker) | Enables web/headless server mode `[1.1]` |
+| `PORT` | `8766` | Web UI and `/oauth/callback` server port  |
+| `WEB_AUTH` | `false` (`true` in Docker) | Enables web/headless server mode  |
 | `OAUTH_REDIRECT_URI` | `None` (auto-detected) | Explicit callback URL (e.g. `https://gmail.yourdomain.com/oauth/callback`). If unset, auto-detects from `X-Forwarded-Proto` and `X-Forwarded-Host`. |
 | `GOOGLE_CREDENTIALS` | `None` | Optional JSON string alternative to mounting `credentials.json` |
 
@@ -129,7 +129,7 @@ Because the slim Docker image does not include `git`, static asset cache-busting
 ## Troubleshooting
 
 * **`Error 400: redirect_uri_mismatch`:** Verify the Authorized redirect URI in Google Cloud Console matches `OAUTH_REDIRECT_URI` character-for-character (including `https://` and `/oauth/callback`).
-* **`Access blocked` / `403: access_denied`:** Add the GMail address you are trying to log into under **Google Auth Platform -> Audience -> Test users** in Google Cloud Console `[1.1]`.
+* **`Access blocked` / `403: access_denied`:** Add the GMail address you are trying to log into under **Google Auth Platform -> Audience -> Test users** in Google Cloud Console.
 * **`IsADirectoryError` on `credentials.json`:** Docker creates an empty folder if `credentials.json` didn't exist before running `docker compose up`. Run `docker compose down`, remove the empty `credentials.json` directory (`rmdir credentials.json`), copy your real JSON file there, and start again.
 * **Old popup or UI changes not appearing behind Cloudflare:** Purge Cloudflare's cache or bump `app_version` in `app/core/config.py` and rebuild.
 
@@ -137,16 +137,16 @@ Because the slim Docker image does not include `git`, static asset cache-busting
 
 ## Security & Privacy
 
-* **100% Self-Hosted:** Runs directly on your machine or server—no third-party servers, telemetry, or analytics `[1.1]`.
-* **Local Token Storage:** OAuth tokens are stored locally in `./data/tokens/` (only `gmail.readonly` and `gmail.modify` scopes are requested) `[1.1]`.
-* **Safe Deletion:** Deleted emails are moved to GMail's **Trash** (retained 30 days), not permanently purged `[1.1]`.
+* **100% Self-Hosted:** Runs directly on your machine or server—no third-party servers, telemetry, or analytics.
+* **Local Token Storage:** OAuth tokens are stored locally in `./data/tokens/` (only `gmail.readonly` and `gmail.modify` scopes are requested).
+* **Safe Deletion:** Deleted emails are moved to GMail's **Trash** (retained 30 days), not permanently purged.
 
 ---
 
 ## Tech Stack
 
-* **Backend:** Python 3.11+, FastAPI, Uvicorn, Google API Python Client `[1.1]`
-* **Frontend:** HTML5, CSS3, Vanilla JavaScript, Jinja2 templates `[1.1]`
+* **Backend:** Python 3.11+, FastAPI, Uvicorn, Google API Python Client 
+* **Frontend:** HTML5, CSS3, Vanilla JavaScript, Jinja2 templates 
 
 ---
 
