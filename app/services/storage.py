@@ -5,6 +5,7 @@ Analyzes Google One storage across Drive, Hidden Drive/App Data, and Gmail.
 """
 
 import logging
+import json
 from googleapiclient.errors import HttpError
 
 from app.services.auth import get_drive_service, get_gmail_service
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def analyze_storage(min_email_mb: int = 5) -> dict:
-    """Analyze Drive quota, largest Drive files, hidden Drive usage, and largest Gmail emails."""
+    """Analyze Drive quota, largest Drive files, hidden Drive usage, and largest GMail emails."""
     drive_service, drive_err = get_drive_service()
     if drive_err == "NEEDS_DRIVE_SCOPE":
         return {"needs_drive_scope": True, "error": "Drive permission required."}
@@ -204,6 +205,18 @@ def analyze_storage(min_email_mb: int = 5) -> dict:
         return {"error": str(e)}
 
 
+def _format_http_error(err: HttpError) -> str:
+    """Extract clean human-readable message from Google HttpError."""
+    try:
+        payload = json.loads(err.content.decode("utf-8"))
+        msg = payload.get("error", {}).get("message")
+        if msg:
+            return f"Google API ({err.resp.status}): {msg}"
+    except Exception:
+        pass
+    return str(err)
+
+
 def trash_drive_file(file_id: str) -> dict:
     """Move a Google Drive file to Trash."""
     drive_service, err = get_drive_service()
@@ -212,11 +225,15 @@ def trash_drive_file(file_id: str) -> dict:
     try:
         execute_with_backoff(
             lambda: drive_service.files()
-            .update(fileId=file_id, body={"trashed": True})
+            .update(fileId=file_id, body={"trashed": True}, supportsAllDrives=True)
             .execute()
         )
         return {"success": True, "message": "Moved Drive file to Trash"}
+    except HttpError as e:
+        logger.warning(f"Failed to trash Drive file {file_id}: {e}")
+        return {"success": False, "message": _format_http_error(e)}
     except Exception as e:
+        logger.exception(f"Unexpected error trashing Drive file {file_id}")
         return {"success": False, "message": str(e)}
 
 
