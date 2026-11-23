@@ -1,10 +1,12 @@
 /**
- * Gmail Unsubscribe - Authentication Module
+ * Gmail Unsubscribe - Authentication Module (Multi-Account)
  */
 
 window.GmailCleaner = window.GmailCleaner || {};
 
 GmailCleaner.Auth = {
+    currentEmail: null,
+
     async checkStatus() {
         try {
             const response = await fetch('/api/auth-status');
@@ -20,19 +22,34 @@ GmailCleaner.Auth = {
         const userSection = document.getElementById('userSection');
 
         if (authStatus.logged_in && authStatus.email) {
-            const safeEmail = GmailCleaner.UI.escapeHtml(authStatus.email);
+            this.currentEmail = authStatus.email;
+            const accounts = Array.isArray(authStatus.accounts) && authStatus.accounts.length > 0
+                ? authStatus.accounts
+                : [authStatus.email];
+
+            const optionsHtml = accounts.map(acc => {
+                const safeAcc = GmailCleaner.UI.escapeHtml(acc);
+                const selected = acc === authStatus.email ? 'selected' : '';
+                return `<option value="${safeAcc}" ${selected}>${safeAcc}</option>`;
+            }).join('');
+
             const initial = authStatus.email.charAt(0).toUpperCase();
+            const safeEmail = GmailCleaner.UI.escapeHtml(authStatus.email);
+
             userSection.innerHTML = `
-                <span class="user-email">${safeEmail}</span>
-                <div class="user-avatar" onclick="GmailCleaner.Auth.showUserMenu()" title="${safeEmail}">${initial}</div>
+                <div class="user-avatar" title="${safeEmail}">${initial}</div>
+                <select id="accountSwitcher" class="filter-select" onchange="GmailCleaner.Auth.switchAccount(this.value)" title="Switch Gmail Account">
+                    ${optionsHtml}
+                </select>
+                <button class="btn btn-sm btn-primary" onclick="GmailCleaner.Auth.signIn()">+ Add Account</button>
                 <button class="btn btn-sm btn-secondary" onclick="GmailCleaner.Auth.signOut()">Sign Out</button>
             `;
             GmailCleaner.Filters.showBar(true);
             GmailCleaner.UI.showView('unsubscribe');
 
-            // Load labels for filter dropdown
             this.loadLabelsForFilter();
         } else {
+            this.currentEmail = null;
             userSection.innerHTML = '';
             GmailCleaner.Filters.showBar(false);
             GmailCleaner.UI.showView('login');
@@ -41,7 +58,6 @@ GmailCleaner.Auth = {
 
     async loadLabelsForFilter() {
         try {
-            // Load labels using the Labels module
             const labels = await GmailCleaner.Labels.loadLabels();
             if (labels && labels.user) {
                 GmailCleaner.Filters.populateLabelDropdown(labels.user);
@@ -53,35 +69,19 @@ GmailCleaner.Auth = {
 
     async signIn() {
         const signInBtn = document.getElementById('signInBtn');
-
         if (signInBtn) {
             signInBtn.disabled = true;
-            signInBtn.innerHTML = '<span>Signing in...</span>';
+            signInBtn.innerHTML = '<span>Redirecting to Google...</span>';
         }
 
         try {
             const statusResp = await fetch('/api/web-auth-status');
             const status = await statusResp.json();
 
-            // Check if credentials exist
             if (!status.has_credentials) {
                 this.resetSignInButton();
-                alert('credentials.json not found!\n\nSetup instructions:\n1. Go to https://console.cloud.google.com/\n2. Create project → Enable Gmail API\n3. Create OAuth credentials (Desktop app)\n4. Download JSON → rename to credentials.json\n5. Put credentials.json in the app folder\n6. Restart the app');
+                alert('credentials.json not found or invalid! Check your credentials.json mount.');
                 return;
-            }
-
-            if (status.web_auth_mode) {
-                const msg = `Docker detected! To sign in:
-
-1. Check Docker logs for the authorization URL:
-   docker logs cleanup_email-gmail-cleaner-1
-
-2. Copy the URL and open it in your browser
-
-3. After authorizing, you'll be signed in automatically.
-
-(Or generate token.json locally and mount it)`;
-                alert(msg);
             }
 
             const signInResp = await fetch('/api/sign-in', { method: 'POST' });
@@ -93,32 +93,37 @@ GmailCleaner.Auth = {
                 return;
             }
 
-            this.pollStatus();
+            if (signInResult.auth_url) {
+                window.location.href = signInResult.auth_url;
+            } else {
+                this.resetSignInButton();
+                alert('Failed to get authorization URL.');
+            }
         } catch (error) {
             alert('Error signing in: ' + error.message);
             this.resetSignInButton();
         }
     },
 
-    async pollStatus(attempts = 0) {
-        const maxAttempts = 120;
-        const signInBtn = document.getElementById('signInBtn');
+    async switchAccount(email) {
+        if (!email || email === this.currentEmail) return;
 
         try {
-            const response = await fetch('/api/auth-status');
-            const status = await response.json();
-
-            if (status.logged_in) {
-                this.updateUI(status);
-            } else if (attempts < maxAttempts) {
-                setTimeout(() => this.pollStatus(attempts + 1), 1000);
-            } else {
-                this.resetSignInButton();
-                alert('Sign-in timed out. Please try again.');
+            const resp = await fetch('/api/accounts/switch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email }),
+            });
+            const result = await resp.json();
+            if (!resp.ok || !result.success) {
+                alert('Failed to switch account: ' + (result.detail || 'Unknown error'));
+                this.checkStatus();
+                return;
             }
+            window.location.reload();
         } catch (error) {
-            console.error('Error polling auth status:', error);
-            setTimeout(() => this.pollStatus(attempts + 1), 1000);
+            alert('Error switching account: ' + error.message);
+            this.checkStatus();
         }
     },
 
@@ -134,30 +139,25 @@ GmailCleaner.Auth = {
     },
 
     async checkWebAuthMode() {
-        // No longer needed - sign in works everywhere now!
         return;
     },
 
     async signOut() {
-        if (!confirm('Sign out of your Gmail account?')) return;
+        const target = this.currentEmail || 'this account';
+        if (!confirm(`Sign out of ${target}?`)) return;
 
         try {
-            await fetch('/api/sign-out', { method: 'POST' });
-            GmailCleaner.results = [];
-            GmailCleaner.Scanner.updateResultsBadge();
-            GmailCleaner.Scanner.displayResults();
-            document.getElementById('selectAll').checked = false;
-            this.checkStatus();
+            await fetch('/api/sign-out', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: this.currentEmail }),
+            });
+            window.location.reload();
         } catch (error) {
             alert('Error signing out: ' + error.message);
         }
-    },
-
-    showUserMenu() {
-        console.log('User menu clicked');
     }
 };
 
-// Global shortcuts for onclick handlers
 function signIn() { GmailCleaner.Auth.signIn(); }
 function signOut() { GmailCleaner.Auth.signOut(); }
