@@ -190,6 +190,18 @@ class MarkImportantRequest(BaseModel):
         default=True, description="True to mark important, False to unmark"
     )
 
+class SwitchAccountRequest(BaseModel):
+    """Request to switch the active Gmail account."""
+
+    email: str = Field(..., min_length=3, description="Email address to switch to")
+
+
+class RemoveAccountRequest(BaseModel):
+    """Request to sign out / remove a Gmail account."""
+
+    email: Optional[str] = Field(
+        default=None, description="Email address to remove (defaults to active account)"
+    )
 
 # ----- Response Models -----
 
