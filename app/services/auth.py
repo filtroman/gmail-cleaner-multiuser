@@ -189,7 +189,7 @@ def _load_valid_creds_for_email(email: str) -> Credentials | None:
     if not token_path or not os.path.exists(token_path):
         return None
     try:
-        creds = Credentials.from_authorized_user_file(token_path, settings.scopes)
+        creds = Credentials.from_authorized_user_file(token_path)
     except (ValueError, OSError) as e:
         logger.warning(f"Corrupted token file for {email}: {e}")
         _remove_account(email)
