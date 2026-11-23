@@ -86,6 +86,12 @@
                         </svg>
                         <span>Mark as Read</span>
                     </a>
+                    <a href="#" class="nav-item" data-view="storage">
+                        <svg viewBox="0 0 24 24" width="20" height="20">
+                            <path fill="currentColor" d="M2 20h20v-4H2v4zm2-3h2v2H4v-2zM2 4v4h20V4H2zm4 3H4V5h2v2zm-4 7h20v-4H2v4zm2-3h2v2H4v-2z"/>
+                        </svg>
+                        <span>Storage Analyzer</span>
+                    </a>
                 </nav>
 
                 <div class="sidebar-footer">
@@ -356,6 +362,96 @@
                         <h1>Delete Emails by Sender</h1>
                         <p>Scan your inbox and organize or delete emails from specific senders</p>
                     </div>
+                    
+                    <!-- Storage Analyzer View -->
+                <div class="view hidden" id="storageView">
+                    <div class="content-header">
+                        <h1>Google Storage Analyzer</h1>
+                        <p>Find what's eating your Google One storage across Drive, Hidden Backups, and GMail</p>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="action-row">
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label for="storageMinEmailMb">Min GMail attachment size</label>
+                                    <select id="storageMinEmailMb" class="form-select">
+                                        <option value="1">1 MB+</option>
+                                        <option value="5" selected>5 MB+</option>
+                                        <option value="10">10 MB+</option>
+                                        <option value="20">20 MB+</option>
+                                    </select>
+                                </div>
+                                <button class="btn btn-primary" id="storageScanBtn" onclick="GmailCleaner.Storage.analyze()">
+                                    Analyze Storage
+                                </button>
+                                <a href="https://drive.google.com/drive/backups" target="_blank" rel="noopener" class="btn btn-secondary">
+                                    Open Drive Backups (WhatsApp)
+                                </a>
+                                <a href="https://photos.google.com/quotamanagement" target="_blank" rel="noopener" class="btn btn-secondary">
+                                    Photos Quota Manager
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card hidden" id="storageScopePrompt">
+                        <div class="card-body">
+                            <h3>Google Drive Permission Needed</h3>
+                            <p style="margin: 8px 0 16px; color: var(--text-secondary);">
+                                This account was signed in before Drive support was added. Click below to re-authorize with Drive + GMail access.
+                            </p>
+                            <button class="btn btn-primary" onclick="GmailCleaner.Auth.signIn()">Grant Drive Access</button>
+                        </div>
+                    </div>
+
+                    <div class="hidden" id="storageContent">
+                        <div class="card">
+                            <div class="card-header">
+                                <h3 id="storageQuotaHeadline">Storage Overview</h3>
+                            </div>
+                            <div class="card-body">
+                                <div class="progress-container" style="height: 10px;">
+                                    <div class="progress-bar" id="storageQuotaBar"></div>
+                                </div>
+                                <div class="storage-grid">
+                                    <div class="storage-stat-box">
+                                        <span class="storage-stat-label">Drive (Visible Files)</span>
+                                        <strong id="statDriveVisible">—</strong>
+                                    </div>
+                                    <div class="storage-stat-box">
+                                        <span class="storage-stat-label">Drive Trash</span>
+                                        <strong id="statDriveTrash">—</strong>
+                                        <button class="btn btn-sm btn-danger" id="emptyDriveTrashBtn" style="margin-top: 8px;" onclick="GmailCleaner.Storage.emptyDriveTrash()">Empty Drive Trash</button>
+                                    </div>
+                                    <div class="storage-stat-box">
+                                        <span class="storage-stat-label">Hidden Drive / App Backups</span>
+                                        <strong id="statDriveHidden">—</strong>
+                                    </div>
+                                    <div class="storage-stat-box">
+                                        <span class="storage-stat-label">GMail + Photos + Other</span>
+                                        <strong id="statOtherQuota">—</strong>
+                                    </div>
+                                </div>
+                                <p id="storageGmailTrashInfo" style="margin-top: 14px; font-size: 13px; color: var(--text-secondary);"></p>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Largest Google Drive Files (<span id="storageDriveCount">0</span>)</h3>
+                            </div>
+                            <div class="results-list" id="storageDriveList"></div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Largest GMail Messages (<span id="storageEmailCount">0</span>)</h3>
+                            </div>
+                            <div class="results-list" id="storageEmailList"></div>
+                        </div>
+                    </div>
+                </div>
 
                     <!-- Info Note -->
                     <div class="info-note">
@@ -491,6 +587,7 @@
     <script src="/static/js/markread.js?v={{ cache_bust }}"></script>
     <script src="/static/js/delete.js?v={{ cache_bust }}"></script>
     <script src="/static/js/labels.js?v={{ cache_bust }}"></script>
+    <script src="/static/js/storage.js?v={{ cache_bust }}"></script>
     <!-- Litepicker Date Range Picker Library -->
     <script src="https://cdn.jsdelivr.net/npm/litepicker@latest/dist/litepicker.js"></script>
 </body>
