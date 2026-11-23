@@ -246,7 +246,7 @@ async def api_important_status():
         ) from e
 
 @router.get("/storage/analyze")
-async def api_storage_analyze(min_email_mb: int = 5):
+async def api_storage_analyze(min_email_mb: float = 5):
     """Analyze Google One storage across Drive and large Gmail emails."""
     try:
         return analyze_storage(min_email_mb=min_email_mb)
