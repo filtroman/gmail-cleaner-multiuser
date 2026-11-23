@@ -6,8 +6,9 @@ POST endpoints for triggering operations.
 
 import logging
 from functools import partial
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 
+from app.core import settings
 from app.models import (
     ScanRequest,
     MarkReadRequest,
@@ -21,10 +22,13 @@ from app.models import (
     RemoveLabelRequest,
     ArchiveRequest,
     MarkImportantRequest,
+    SwitchAccountRequest,
+    RemoveAccountRequest,
 )
 from app.services import (
     scan_emails,
-    get_gmail_service,
+    create_oauth_url,
+    switch_account,
     sign_out,
     unsubscribe_single,
     mark_emails_as_read,
@@ -55,17 +59,58 @@ async def api_scan(request: ScanRequest, background_tasks: BackgroundTasks):
 
 
 @router.post("/sign-in")
-async def api_sign_in(background_tasks: BackgroundTasks):
-    """Trigger OAuth sign-in flow."""
-    background_tasks.add_task(get_gmail_service)
-    return {"status": "signing_in"}
+async def api_sign_in(request: Request):
+    """Generate Google OAuth authorization URL and return it to the browser."""
+    try:
+        if settings.oauth_redirect_uri:
+            redirect_uri = settings.oauth_redirect_uri.strip()
+        else:
+            proto = (
+                request.headers.get("x-forwarded-proto", request.url.scheme)
+                .split(",")[0]
+                .strip()
+            )
+            host = (
+                request.headers.get(
+                    "x-forwarded-host",
+                    request.headers.get("host", f"{settings.oauth_host}:{settings.port}"),
+                )
+                .split(",")[0]
+                .strip()
+            )
+            redirect_uri = f"{proto}://{host}/oauth/callback"
+
+        auth_url = create_oauth_url(redirect_uri)
+        return {"status": "redirect", "auth_url": auth_url}
+    except Exception as e:
+        logger.exception("Error starting sign-in")
+        return {"error": str(e)}
+
+
+@router.post("/accounts/switch")
+async def api_switch_account(request: SwitchAccountRequest):
+    """Switch the active Gmail account."""
+    try:
+        return switch_account(request.email)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    except Exception as e:
+        logger.exception("Error switching account")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to switch account",
+        ) from e
 
 
 @router.post("/sign-out")
-async def api_sign_out():
-    """Sign out and clear credentials."""
+async def api_sign_out(request: RemoveAccountRequest | None = None):
+    """Sign out of a specific account or the current active account."""
     try:
-        return sign_out()
+        email = request.email if request else None
+        return sign_out(email)
     except Exception as e:
         logger.exception("Error during sign-out")
         raise HTTPException(
