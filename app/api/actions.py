@@ -24,6 +24,8 @@ from app.models import (
     MarkImportantRequest,
     SwitchAccountRequest,
     RemoveAccountRequest,
+    DriveTrashFileRequest, 
+    GmailTrashMessageRequest,
 )
 from app.services import (
     scan_emails,
@@ -42,6 +44,9 @@ from app.services import (
     remove_label_from_senders_background,
     archive_emails_background,
     mark_important_background,
+    trash_drive_file,
+    empty_drive_trash,
+    trash_gmail_message,
 )
 
 router = APIRouter(prefix="/api", tags=["Actions"])
@@ -294,3 +299,20 @@ async def api_mark_important(
         partial(mark_important_background, request.senders, important=request.important)
     )
     return {"status": "started"}
+
+@router.post("/storage/drive/trash")
+async def api_storage_drive_trash(request: DriveTrashFileRequest):
+    """Move a Drive file to Trash."""
+    return trash_drive_file(request.file_id)
+
+
+@router.post("/storage/drive/empty-trash")
+async def api_storage_drive_empty_trash():
+    """Empty Google Drive Trash."""
+    return empty_drive_trash()
+
+
+@router.post("/storage/gmail/trash")
+async def api_storage_gmail_trash(request: GmailTrashMessageRequest):
+    """Move a single large Gmail message to Trash."""
+    return trash_gmail_message(request.message_id)
