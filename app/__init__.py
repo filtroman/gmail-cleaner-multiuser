@@ -1,1 +1,1 @@
-"""Gmail Cleaner - FastAPI Application"""
+"""GMail Cleaner - FastAPI Application"""
