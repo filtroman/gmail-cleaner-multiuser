@@ -1,7 +1,7 @@
 """
-GMail Delete Operations
+Gmail Delete Operations
 -----------------------
-Functions for deleting emails and scanning senders or repeated subjects.
+Functions for deleting emails and scanning senders, repeated subjects, or individual emails.
 """
 
 import logging
@@ -26,7 +26,6 @@ def _normalize_subject(subject: str) -> tuple[str, str]:
     """Normalize an email subject so repeated threads and calendar invites group together."""
     cleaned = (subject or "").strip()
 
-    # Strip repeated Re: / Fwd: / Fw: prefixes
     while True:
         updated = re.sub(
             r"^(?:re|fwd?|aw|sv)\s*:\s*", "", cleaned, flags=re.IGNORECASE
@@ -35,8 +34,6 @@ def _normalize_subject(subject: str) -> tuple[str, str]:
             break
         cleaned = updated.strip()
 
-    # For calendar invite subjects like "Accepted: Weekly Sync @ Mon Nov 23, 2026 ...",
-    # strip the "@ Day ..." date/time suffix so recurring invites group together
     invite_prefix = (
         r"^(?:invitation|updated invitation|accepted|declined|tentative|canceled(?: event)?)\s*:"
     )
@@ -58,7 +55,7 @@ def _normalize_subject(subject: str) -> tuple[str, str]:
 def scan_senders_for_delete(
     limit: int = 1000, filters: Optional[dict] = None, group_by: str = "sender"
 ):
-    """Scan emails and group by sender or repeated subject for bulk delete."""
+    """Scan emails and group by sender, repeated subject, or individual email."""
     if limit <= 0:
         state.reset_delete_scan()
         state.delete_scan_status["error"] = "Limit must be greater than 0"
@@ -66,7 +63,7 @@ def scan_senders_for_delete(
         return
 
     group_by = (group_by or "sender").lower().strip()
-    if group_by not in ("sender", "subject"):
+    if group_by not in ("sender", "subject", "individual"):
         group_by = "sender"
 
     state.reset_delete_scan()
@@ -126,6 +123,7 @@ def scan_senders_for_delete(
                 "email": "",
                 "display_title": "",
                 "group_type": group_by,
+                "message_id": "",
                 "subjects": [],
                 "senders_set": [],
                 "first_date": None,
@@ -140,7 +138,7 @@ def scan_senders_for_delete(
             sender_name, sender_email = get_sender_info(headers)
             subject = get_subject(headers)
             msg_id = response.get("id", "")
-            size_estimate = response.get("sizeEstimate", 0)
+            size_estimate = int(response.get("sizeEstimate") or 0)
 
             email_date = None
             for header in headers:
@@ -148,7 +146,28 @@ def scan_senders_for_delete(
                     email_date = header["value"]
                     break
 
-            if group_by == "subject":
+            if group_by == "individual":
+                if not msg_id:
+                    return
+                key = f"msg:{msg_id}"
+                from_display = (
+                    f"From: {sender_name} <{sender_email}>"
+                    if sender_name and sender_name != sender_email
+                    else f"From: {sender_email}"
+                )
+                entry = groups[key]
+                entry["count"] = 1
+                entry["sender"] = sender_name
+                entry["email"] = key
+                entry["message_id"] = msg_id
+                entry["display_title"] = subject or "(No Subject)"
+                entry["group_type"] = "individual"
+                entry["subjects"] = [from_display]
+                entry["first_date"] = email_date
+                entry["last_date"] = email_date
+                entry["message_ids"] = [msg_id]
+                entry["total_size"] = size_estimate
+            elif group_by == "subject":
                 group_key, display_title = _normalize_subject(subject)
                 entry = groups[group_key]
                 entry["count"] += 1
@@ -209,7 +228,6 @@ def scan_senders_for_delete(
         formatted = []
         for k, v in groups.items():
             if group_by == "subject":
-                # Only keep subjects that actually repeat (2+ times)
                 if v["count"] < 2:
                     continue
                 senders_list = v.pop("senders_set", [])
@@ -227,14 +245,22 @@ def scan_senders_for_delete(
 
             formatted.append({"email": k, **v})
 
-        sorted_results = sorted(
-            formatted,
-            key=lambda x: x["count"],
-            reverse=True,
-        )
+        if group_by == "individual":
+            sorted_results = sorted(
+                formatted,
+                key=lambda x: x["total_size"],
+                reverse=True,
+            )
+            label = "emails"
+        else:
+            sorted_results = sorted(
+                formatted,
+                key=lambda x: x["count"],
+                reverse=True,
+            )
+            label = "repeated subjects" if group_by == "subject" else "senders"
 
         state.delete_scan_results = sorted_results
-        label = "repeated subjects" if group_by == "subject" else "senders"
         state.delete_scan_status["message"] = f"Found {len(sorted_results)} {label}"
         state.delete_scan_status["done"] = True
 
@@ -254,34 +280,34 @@ def get_delete_scan_results() -> list:
 
 
 def delete_emails_by_sender(sender: str) -> dict:
-    """Delete all emails from a specific sender or repeated subject group."""
+    """Delete emails for a specific sender, repeated subject group, or individual message."""
     if not sender or not sender.strip():
         return {
             "success": False,
             "deleted": 0,
             "size_freed": 0,
-            "message": "No sender or group specified",
+            "message": "No sender or item specified",
         }
 
     sender = sender.strip()
 
-    # Check if this key corresponds to a repeated-subject scan group
-    subject_group = next(
+    cached_group = next(
         (
             r
             for r in state.delete_scan_results
-            if r.get("email") == sender and r.get("group_type") == "subject"
+            if r.get("email") == sender
+            and r.get("group_type") in ("subject", "individual")
         ),
         None,
     )
 
-    if subject_group is not None:
+    if cached_group is not None:
         service, error = get_gmail_service()
         if error:
             return {"success": False, "deleted": 0, "size_freed": 0, "message": error}
 
-        ids = subject_group.get("message_ids", [])
-        size_freed = subject_group.get("total_size", 0)
+        ids = cached_group.get("message_ids", [])
+        size_freed = cached_group.get("total_size", 0)
         if not ids:
             return {
                 "success": True,
@@ -310,7 +336,7 @@ def delete_emails_by_sender(sender: str) -> dict:
                 "success": True,
                 "deleted": deleted,
                 "size_freed": size_freed,
-                "message": f"Moved {deleted} emails to trash",
+                "message": f"Moved {deleted} email(s) to GMail Trash",
             }
         except Exception as e:
             return {"success": False, "deleted": 0, "size_freed": 0, "message": str(e)}
@@ -392,7 +418,7 @@ def delete_emails_by_sender(sender: str) -> dict:
             "success": True,
             "deleted": deleted,
             "size_freed": size_freed,
-            "message": f"Moved {deleted} emails to trash",
+            "message": f"Moved {deleted} emails to GMail Trash",
         }
 
     except Exception as e:
@@ -400,13 +426,13 @@ def delete_emails_by_sender(sender: str) -> dict:
 
 
 def delete_emails_bulk(senders: list[str]) -> dict:
-    """Delete emails from multiple senders or subject groups."""
+    """Delete emails from multiple senders, subject groups, or individual messages."""
     if not senders:
         return {
             "success": False,
             "deleted": 0,
             "size_freed": 0,
-            "message": "No senders specified",
+            "message": "No items specified",
         }
 
     total_deleted = 0
@@ -445,7 +471,7 @@ def delete_emails_bulk(senders: list[str]) -> dict:
 
 
 def delete_emails_bulk_background(senders: list[str]) -> None:
-    """Delete emails from multiple senders or subject groups with progress updates."""
+    """Delete emails from multiple senders, subject groups, or individual messages."""
     state.reset_delete_bulk()
 
     if not senders or not isinstance(senders, list):
@@ -466,21 +492,20 @@ def delete_emails_bulk_background(senders: list[str]) -> None:
     all_message_ids = []
     errors = []
 
-    # Map cached subject groups for O(1) lookup
-    subject_groups = {
+    cached_groups = {
         r.get("email"): r
         for r in state.delete_scan_results
-        if r.get("group_type") == "subject"
+        if r.get("group_type") in ("subject", "individual")
     }
 
     for i, sender in enumerate(senders):
         state.delete_bulk_status["current_sender"] = i + 1
         state.delete_bulk_status["progress"] = int((i / total_senders) * 40)
 
-        if sender in subject_groups:
-            group = subject_groups[sender]
+        if sender in cached_groups:
+            group = cached_groups[sender]
             state.delete_bulk_status["message"] = (
-                f"Collecting emails for '{group.get('display_title', sender)}'..."
+                f"Collecting '{group.get('display_title', sender)}'..."
             )
             all_message_ids.extend(group.get("message_ids", []))
             continue
@@ -518,7 +543,6 @@ def delete_emails_bulk_background(senders: list[str]) -> None:
         except Exception as e:
             errors.append(f"{sender}: {str(e)}")
 
-    # Deduplicate IDs in case multiple subject groups/senders overlap
     all_message_ids = list(dict.fromkeys(all_message_ids))
 
     if not all_message_ids:
