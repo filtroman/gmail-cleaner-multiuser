@@ -214,6 +214,16 @@ class RemoveAccountRequest(BaseModel):
         default=None, description="Email address to remove (defaults to active account)"
     )
 
+class DriveTrashFileRequest(BaseModel):
+    """Request to move a Google Drive file to Trash."""
+
+    file_id: str = Field(..., min_length=1, description="Google Drive file ID")
+
+
+class GmailTrashMessageRequest(BaseModel):
+    """Request to move a single Gmail message to Trash."""
+
+    message_id: str = Field(..., min_length=1, description="Gmail message ID")
 
 # ----- Response Models -----
 
