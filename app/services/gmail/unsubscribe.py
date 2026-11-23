@@ -1,5 +1,5 @@
 """
-Gmail Unsubscribe Operations
+GMail Unsubscribe Operations
 ----------------------------
 Functions for unsubscribing from email senders.
 """
