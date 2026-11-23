@@ -1,7 +1,7 @@
 """
-Gmail Label Management Operations
+GMail Label Management Operations
 ----------------------------------
-Functions for managing Gmail labels.
+Functions for managing GMail labels.
 """
 
 from app.core import state
@@ -9,7 +9,7 @@ from app.services.auth import get_gmail_service
 
 
 def get_labels() -> dict:
-    """Get all Gmail labels."""
+    """Get all GMail labels."""
     service, error = get_gmail_service()
     if error:
         return {"success": False, "labels": [], "error": error}
@@ -48,7 +48,7 @@ def get_labels() -> dict:
 
 
 def create_label(name: str) -> dict:
-    """Create a new Gmail label."""
+    """Create a new GMail label."""
     if not name or not name.strip():
         return {"success": False, "label": None, "error": "Label name is required"}
 
@@ -86,7 +86,7 @@ def create_label(name: str) -> dict:
 
 
 def delete_label(label_id: str) -> dict:
-    """Delete a Gmail label."""
+    """Delete a GMail label."""
     if not label_id:
         return {"success": False, "error": "Label ID is required"}
 
