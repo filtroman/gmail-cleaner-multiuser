@@ -1,5 +1,5 @@
 """
-Gmail Cleaner - FastAPI Application
+GMail Cleaner - FastAPI Application
 -----------------------------------
 Main application factory and configuration.
 """
@@ -130,7 +130,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title=settings.app_name,
-        description="Bulk unsubscribe and email management tool for Gmail",
+        description="Bulk unsubscribe and email management tool for GMail",
         version=settings.app_version,
         lifespan=lifespan,
         docs_url="/docs",
@@ -172,7 +172,7 @@ def create_app() -> FastAPI:
                 <body style="font-family: sans-serif; padding: 40px; max-width: 600px; margin: auto;">
                     <h2>Authentication Failed</h2>
                     <p>{safe_err}</p>
-                    <p><a href="/">Back to Gmail Cleaner</a></p>
+                    <p><a href="/">Back to GMail Cleaner</a></p>
                 </body>
             </html>
             """,
