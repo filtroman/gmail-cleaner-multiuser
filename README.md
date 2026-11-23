@@ -150,8 +150,8 @@ Because the slim Docker image does not include `git`, static asset cache-busting
 
 ---
 
-## Support the Original Project & License
+## Support & License
 
-* Original repository: [github.com/Gururagavendra/gmail-cleaner](https://github.com/Gururagavendra/gmail-cleaner) `[1.1]`
-* Support the original author: [Buy Me a Coffee](https://buymeacoffee.com/gururagavendra) `[1.1]`
+* **Original Project:** [github.com/Gururagavendra/gmail-cleaner](https://github.com/Gururagavendra/gmail-cleaner) — [Support the original creator](https://buymeacoffee.com/gururagavendra)
+* **This Fork:** Maintained by [@filtroman](https://github.com/filtroman) — [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-filtroman-ffdd00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/filtroman)
 * **License:** Inherits the upstream project's license — see the [`LICENSE`](LICENSE) file for details.
