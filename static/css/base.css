@@ -364,6 +364,7 @@ body {
     font-weight: 500;
     color: var(--text-primary);
     line-height: 1.4;
+    word-break: break-word;
 }
 
 .toast-tip {
