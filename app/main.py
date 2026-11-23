@@ -5,16 +5,19 @@ Main application factory and configuration.
 """
 
 import hashlib
+import html
 import subprocess
 import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.core import settings
 from app.api import status_router, actions_router
+from app.services import complete_oauth_callback
 
 templates = Jinja2Templates(directory="templates")
 
@@ -149,6 +152,31 @@ def create_app() -> FastAPI:
             request,
             "index.html",
             {"cache_bust": STARTUP_CACHE_BUST, "version": settings.app_version},
+        )
+
+    @app.get("/oauth/callback", include_in_schema=False)
+    async def oauth_callback(
+        state: str | None = None,
+        code: str | None = None,
+        error: str | None = None,
+    ):
+        """Handle Google OAuth2 callback directly inside FastAPI."""
+        success, result = complete_oauth_callback(state, code, error)
+        if success:
+            return RedirectResponse(url="/", status_code=302)
+
+        safe_err = html.escape(result)
+        return HTMLResponse(
+            content=f"""
+            <html>
+                <body style="font-family: sans-serif; padding: 40px; max-width: 600px; margin: auto;">
+                    <h2>Authentication Failed</h2>
+                    <p>{safe_err}</p>
+                    <p><a href="/">Back to Gmail Cleaner</a></p>
+                </body>
+            </html>
+            """,
+            status_code=400,
         )
 
     return app
