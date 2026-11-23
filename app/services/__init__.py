@@ -52,3 +52,11 @@ from .gmail import (
     mark_important_background,
     get_important_status,
 )
+
+from .auth import get_drive_service
+from .storage import (
+    analyze_storage,
+    trash_drive_file,
+    empty_drive_trash,
+    trash_gmail_message,
+)
