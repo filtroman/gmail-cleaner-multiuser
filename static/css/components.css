@@ -334,7 +334,7 @@
 }
 
 .result-date-range {
-    background: rgba(66, 133, 244, 0.08);
+    background: rgba(66, 133, 244, 0.14);
     color: var(--text-secondary);
     font-size: 12px;
     font-weight: 500;
@@ -361,20 +361,13 @@
     transition: all 0.2s;
 }
 
-.unsub-btn.one-click {
-    background: var(--primary-color);
-    color: white;
-}
-
-.unsub-btn.one-click:hover {
-    background: var(--primary-hover);
-}
-
+.unsub-btn.one-click,
 .unsub-btn.manual {
     background: var(--primary-color);
     color: white;
 }
 
+.unsub-btn.one-click:hover,
 .unsub-btn.manual:hover {
     background: var(--primary-hover);
 }
@@ -626,7 +619,8 @@
     border-radius: var(--radius-sm);
     font-size: 12px;
     font-family: monospace;
-    background: white;
+    background: var(--card-bg);
+    color: var(--text-primary);
 }
 
 .code-input-row {
@@ -640,6 +634,8 @@
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
     font-size: 14px;
+    background: var(--card-bg);
+    color: var(--text-primary);
 }
 
 .error-text {
@@ -677,10 +673,7 @@
         flex-wrap: wrap;
     }
 
-    .result-sender {
-        width: 100%;
-    }
-
+    .result-sender,
     .result-subject {
         width: 100%;
     }
@@ -751,20 +744,20 @@
 /* Special action button colors (when enabled) */
 .btn.btn-action.btn-important-action:not(:disabled) {
     border-color: #eab308;
-    color: #ca8a04;
+    color: #eab308;
 }
 
 .btn.btn-action.btn-important-action:hover:not(:disabled) {
-    background: #fef9c3;
+    background: rgba(234, 179, 8, 0.14);
 }
 
 .btn.btn-action.btn-download-action:not(:disabled) {
     border-color: #10b981;
-    color: #059669;
+    color: #10b981;
 }
 
 .btn.btn-action.btn-download-action:hover:not(:disabled) {
-    background: #d1fae5;
+    background: rgba(16, 185, 129, 0.14);
 }
 
 .btn.btn-action.btn-delete-action:not(:disabled) {
@@ -773,10 +766,10 @@
 }
 
 .btn.btn-action.btn-delete-action:hover:not(:disabled) {
-    background: #fee2e2;
+    background: rgba(239, 68, 68, 0.14);
 }
 
-/* Legacy label styles - keep for dropdown wrapper */
+/* Legacy label styles */
 .label-actions-inline {
     display: flex;
     gap: 8px;
@@ -844,7 +837,6 @@
     margin-top: 4px;
 }
 
-/* Dynamically created dropdown - always visible */
 #labelDropdown {
     display: block;
 }
@@ -886,7 +878,6 @@
     font-size: 13px;
 }
 
-/* Label Dropdown Content (dynamically created) */
 .label-dropdown-content {
     padding: 8px 0;
 }
@@ -913,6 +904,8 @@
     padding: 6px 10px;
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
+    background: var(--card-bg);
+    color: var(--text-primary);
     font-size: 13px;
     outline: none;
 }
@@ -933,7 +926,7 @@
 }
 
 .label-create-btn:hover {
-    background: var(--primary-dark);
+    background: var(--primary-hover);
 }
 
 .label-create-btn:disabled {
@@ -945,7 +938,7 @@
     padding: 8px 12px 4px;
     font-size: 11px;
     font-weight: 600;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     text-transform: uppercase;
 }
 
@@ -1003,7 +996,7 @@
     padding: 32px 48px;
     border-radius: var(--radius-md);
     text-align: center;
-    box-shadow: var(--shadow-lg);
+    box-shadow: var(--shadow-md);
     max-width: 400px;
 }
 
@@ -1045,5 +1038,5 @@
 
 .label-stats {
     font-size: 12px;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
 }
