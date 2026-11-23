@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     # Server
     app_name: str = "GMail Cleaner"
-    app_version: str = "2.0.2"
+    app_version: str = "2.1.0"
     debug: bool = False
     port: int = 8766
     oauth_port: int = 8767
