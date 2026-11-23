@@ -136,8 +136,8 @@ class DeleteScanRequest(BaseModel):
     @classmethod
     def validate_group_by(cls, v) -> str:
         val = (v or "sender").lower().strip()
-        if val not in ("sender", "subject"):
-            raise ValueError("group_by must be 'sender' or 'subject'")
+        if val not in ("sender", "subject", "individual"):
+            raise ValueError("group_by must be 'sender', 'subject', or 'individual'")
         return val
 
 
