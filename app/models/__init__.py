@@ -13,6 +13,8 @@ from .schemas import (
     RemoveLabelRequest,
     ArchiveRequest,
     MarkImportantRequest,
+    SwitchAccountRequest,
+    RemoveAccountRequest,
     StatusResponse,
     AuthStatusResponse,
     ScanStatusResponse,
