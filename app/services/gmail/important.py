@@ -1,5 +1,5 @@
 """
-Gmail Mark Important Operations
+GMail Mark Important Operations
 --------------------------------
 Functions for marking/unmarking emails as important.
 """
@@ -64,7 +64,7 @@ def mark_important_background(senders: list[str], *, important: bool = True) -> 
             # Mark in batches
             for j in range(0, len(message_ids), 100):
                 batch_ids = message_ids[j : j + 100]
-                # Gmail API requires explicit parameter names (addLabelIds or removeLabelIds)
+                # GMail API requires explicit parameter names (addLabelIds or removeLabelIds)
                 body = (
                     {"ids": batch_ids, "addLabelIds": ["IMPORTANT"]}
                     if important
