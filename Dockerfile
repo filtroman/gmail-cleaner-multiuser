@@ -23,8 +23,8 @@ COPY . .
 # Remove any existing tokens (user should mount their own)
 RUN rm -f token.json
 
-# Expose ports: 8766 for web UI, 8767 for OAuth callback
-EXPOSE 8766 8767
+# Expose ports: 8766 for both web UI and OAuth callback
+EXPOSE 8766
 
 # Run with uvicorn (FastAPI)
 CMD ["uv", "run", "python", "main.py"]
