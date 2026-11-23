@@ -13,8 +13,8 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     # Server
-    app_name: str = "Gmail Cleaner"
-    app_version: str = "2.0.0"
+    app_name: str = "GMail Cleaner"
+    app_version: str = "2.0.1"
     debug: bool = False
     port: int = 8766
     oauth_port: int = 8767
