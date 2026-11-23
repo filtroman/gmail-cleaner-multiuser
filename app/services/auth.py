@@ -1,7 +1,7 @@
 """
 Authentication Service
 ----------------------
-Handles multi-account OAuth2 authentication with Gmail API via FastAPI callback.
+Handles multi-account OAuth2 authentication with Gmail & Drive APIs via FastAPI callback.
 """
 
 import json
@@ -22,6 +22,7 @@ from app.core import settings, state
 logger = logging.getLogger(__name__)
 
 _accounts_lock = threading.Lock()
+DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 
 
 def _is_file_empty(file_path: str) -> bool:
@@ -66,7 +67,6 @@ def _load_accounts_index() -> dict:
         except (OSError, json.JSONDecodeError) as e:
             logger.warning(f"Failed to read accounts index: {e}")
 
-    # Prune entries whose token files no longer exist
     cleaned_accounts = {}
     for email, filename in data["accounts"].items():
         token_path = os.path.join(settings.tokens_dir, os.path.basename(filename))
@@ -133,9 +133,7 @@ def _migrate_legacy_token() -> None:
     if not os.path.exists(settings.token_file) or _is_file_empty(settings.token_file):
         return
     try:
-        creds = Credentials.from_authorized_user_file(
-            settings.token_file, settings.scopes
-        )
+        creds = Credentials.from_authorized_user_file(settings.token_file)
         if not creds:
             return
         if creds.expired and creds.refresh_token:
@@ -184,7 +182,7 @@ def _try_refresh_creds(creds: Credentials, email: str) -> Credentials | None:
 
 
 def _load_valid_creds_for_email(email: str) -> Credentials | None:
-    """Load and refresh credentials for a specific email if needed."""
+    """Load and refresh credentials for a specific email using the token's own scopes."""
     token_path = _get_token_path_for_email(email)
     if not token_path or not os.path.exists(token_path):
         return None
@@ -271,7 +269,6 @@ def create_oauth_url(redirect_uri: str) -> str:
     )
 
     with state.oauth_state_lock:
-        # Clean up expired flows older than 15 minutes
         now = time.time()
         expired = [
             k
@@ -355,8 +352,6 @@ def get_gmail_service():
         logger.error(f"Failed to build Gmail service: {e}", exc_info=True)
         return None, f"Failed to connect to Gmail API: {str(e)}"
 
-DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
-
 
 def get_drive_service():
     """Get authenticated Google Drive API service for the active account."""
@@ -369,7 +364,6 @@ def get_drive_service():
     if not token_path or not os.path.exists(token_path):
         return None, f"No token found for {active_email}."
 
-    # Inspect actual granted scopes stored in the token JSON
     try:
         with open(token_path, "r") as f:
             token_data = json.load(f)
@@ -389,6 +383,7 @@ def get_drive_service():
     except Exception as e:
         logger.error(f"Failed to build Drive service: {e}", exc_info=True)
         return None, f"Failed to connect to Google Drive API: {str(e)}"
+
 
 def switch_account(email: str) -> dict:
     """Switch the active Gmail account."""
@@ -453,7 +448,6 @@ def check_login_status() -> dict:
                 "logged_in": True,
                 "accounts": list_accounts(),
             }
-        # Active token failed/expired; check if another valid account exists
         accounts = list_accounts()
         active_email = _get_active_email()
         if active_email and _load_valid_creds_for_email(active_email):
