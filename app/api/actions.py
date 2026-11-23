@@ -146,21 +146,23 @@ async def api_mark_read(request: MarkReadRequest, background_tasks: BackgroundTa
 async def api_delete_scan(
     request: DeleteScanRequest, background_tasks: BackgroundTasks
 ):
-    """Scan senders for bulk delete."""
+    """Scan senders or repeated subjects for bulk delete."""
     filters_dict = (
         request.filters.model_dump(exclude_none=True) if request.filters else None
     )
-    background_tasks.add_task(scan_senders_for_delete, request.limit, filters_dict)
+    background_tasks.add_task(
+        scan_senders_for_delete, request.limit, filters_dict, request.group_by
+    )
     return {"status": "started"}
 
 
 @router.post("/delete-emails")
 async def api_delete_emails(request: DeleteEmailsRequest):
-    """Delete emails from a specific sender."""
+    """Delete emails from a specific sender or repeated subject group."""
     if not request.sender or not request.sender.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Sender email is required",
+            detail="Sender or group key is required",
         )
     try:
         return delete_emails_by_sender(request.sender)
@@ -176,7 +178,7 @@ async def api_delete_emails(request: DeleteEmailsRequest):
 async def api_delete_emails_bulk(
     request: DeleteBulkRequest, background_tasks: BackgroundTasks
 ):
-    """Delete emails from multiple senders (background task with progress)."""
+    """Delete emails from multiple senders or subject groups."""
     background_tasks.add_task(delete_emails_bulk_background, request.senders)
     return {"status": "started"}
 
@@ -186,7 +188,6 @@ async def api_download_emails(
     request: DownloadEmailsRequest, background_tasks: BackgroundTasks
 ):
     """Start downloading email metadata for selected senders."""
-    # Note: Empty list is allowed - service function will handle it gracefully
     background_tasks.add_task(download_emails_background, request.senders)
     return {"status": "started"}
 
