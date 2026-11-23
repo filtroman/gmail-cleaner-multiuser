@@ -4,6 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GMail Unsubscribe</title>
+    <script>
+        (function () {
+            const saved = localStorage.getItem('gmailCleanerTheme');
+            const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            if (saved === 'dark' || (!saved && prefersDark)) {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }
+        })();
+    </script>
     <!-- Modular CSS (cache-busted) -->
     <link rel="stylesheet" href="/static/css/base.css?v={{ cache_bust }}">
     <link rel="stylesheet" href="/static/css/layout.css?v={{ cache_bust }}">
@@ -35,6 +44,7 @@
                 </div>
             </div>
             <div class="header-right">
+               <button class="btn btn-icon theme-toggle-btn" id="themeToggleBtn" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle dark mode"></button>
                 <div class="user-section" id="userSection">
                     <!-- Filled by JavaScript -->
                 </div>
