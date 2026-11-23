@@ -1,5 +1,5 @@
 /**
- * Gmail Cleaner - Google Storage Analyzer Module
+ * GMail Cleaner - Google Storage Analyzer Module
  */
 
 window.GmailCleaner = window.GmailCleaner || {};
@@ -59,8 +59,8 @@ GmailCleaner.Storage = {
     render(data) {
         const q = data.quota;
         const pct = q.percent || 0;
+        const activeEmail = data.email || GmailCleaner.Auth?.currentEmail || '';
 
-        // Quota bar & headline
         const headline = document.getElementById('storageQuotaHeadline');
         const bar = document.getElementById('storageQuotaBar');
         if (headline) {
@@ -73,7 +73,6 @@ GmailCleaner.Storage = {
             bar.style.background = pct >= 85 ? 'var(--danger-color)' : 'var(--primary-color)';
         }
 
-        // Breakdown stats
         document.getElementById('statDriveVisible').textContent = this.fmtBytes(q.drive_visible);
         document.getElementById('statDriveTrash').textContent = this.fmtBytes(q.drive_trash);
         document.getElementById('statDriveHidden').textContent = this.fmtBytes(q.drive_hidden);
@@ -87,7 +86,8 @@ GmailCleaner.Storage = {
         const gc = data.gmail_counts || {};
         const gmailInfo = document.getElementById('storageGmailTrashInfo');
         if (gmailInfo) {
-            gmailInfo.textContent = `GMail currently has ${gc.trash_messages || 0} emails in Trash and ${gc.spam_messages || 0} in Spam (counted toward quota for 30 days).`;
+            const totalMsgs = (gc.total_messages || 0).toLocaleString();
+            gmailInfo.textContent = `GMail has ${totalMsgs} total messages (${gc.trash_messages || 0} in Trash, ${gc.spam_messages || 0} in Spam).`;
         }
 
         // Render Drive Files
@@ -98,7 +98,7 @@ GmailCleaner.Storage = {
 
         if (driveList) {
             if (files.length === 0) {
-                driveList.innerHTML = '<div class="label-empty">No large Drive files found.</div>';
+                driveList.innerHTML = '<div class="label-empty">No large Drive files owned by you found.</div>';
             } else {
                 driveList.innerHTML = files.map(f => {
                     const safeName = GmailCleaner.UI.escapeHtml(f.name);
@@ -130,11 +130,14 @@ GmailCleaner.Storage = {
             }
         }
 
-        // Render Large Gmail Emails
+        // Render Large GMail Emails
         const emailList = document.getElementById('storageEmailList');
         const emailCount = document.getElementById('storageEmailCount');
         const emails = data.large_emails || [];
-        if (emailCount) emailCount.textContent = emails.length;
+        const totalEmailBytes = gc.large_emails_total_size || 0;
+        if (emailCount) {
+            emailCount.textContent = `${emails.length} · ${this.fmtBytes(totalEmailBytes)}`;
+        }
 
         if (emailList) {
             if (emails.length === 0) {
@@ -143,16 +146,26 @@ GmailCleaner.Storage = {
                 emailList.innerHTML = emails.map(m => {
                     const safeSender = GmailCleaner.UI.escapeHtml(m.sender_email || m.sender_name);
                     const safeSubj = GmailCleaner.UI.escapeHtml(m.subject);
+                    let dateStr = '';
+                    if (m.date) {
+                        const d = new Date(m.date);
+                        if (!isNaN(d.getTime())) dateStr = d.toLocaleDateString();
+                    }
+                    const authParam = activeEmail ? `?authuser=${encodeURIComponent(activeEmail)}` : '';
+                    const gmailUrl = `https://mail.google.com/mail/${authParam}#all/${encodeURIComponent(m.id)}`;
+
                     return `
                         <div class="result-item">
                             <div class="result-content">
                                 <div class="result-sender" title="${safeSender}">${safeSender}</div>
                                 <div class="result-subject" title="${safeSubj}">${safeSubj}</div>
                                 <div class="result-meta">
+                                    ${dateStr ? `<div class="result-date-range">${dateStr}</div>` : ''}
                                     <span class="result-count">${this.fmtBytes(m.size)}</span>
                                 </div>
                             </div>
                             <div class="result-actions">
+                                <a href="${gmailUrl}" target="_blank" rel="noopener" class="link-btn">Open</a>
                                 <button class="unsub-btn delete-btn" onclick="GmailCleaner.Storage.trashGmailMessage('${GmailCleaner.UI.escapeHtml(m.id)}', this)">Trash</button>
                             </div>
                         </div>
@@ -208,7 +221,7 @@ GmailCleaner.Storage = {
         if (res.success) {
             btn.classList.add('success');
             btn.textContent = 'Trashed';
-            GmailCleaner.UI.showSuccessToast('Moved email to Trash');
+            GmailCleaner.UI.showSuccessToast('Moved email to GMail Trash');
         } else {
             btn.disabled = false;
             btn.textContent = 'Trash';
