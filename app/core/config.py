@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     oauth_port: int = 8767
     oauth_external_port: int | None = Field(
         default=None,
-        description="External port for OAuth redirect URI (when different from oauth_port, e.g., Docker port mapping)",
+        description="Deprecated - kept for backwards compatibility",
     )
 
     # Auth
@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     oauth_host: str = Field(
         default="localhost",
         description="Custom host for OAuth redirect (e.g., your domain or IP)",
+    )
+    oauth_redirect_uri: str | None = Field(
+        default=None,
+        description="Explicit full OAuth redirect URI (e.g., https://gmail.yourdomain.com/oauth/callback)",
     )
 
     @field_validator("web_auth", mode="before")
@@ -46,53 +50,29 @@ class Settings(BaseSettings):
 
     credentials_file: str = "credentials.json"
     token_file: str = "token.json"
+    data_dir: str = "."
+    tokens_dir: str = "tokens"
+    accounts_file: str = "accounts.json"
 
     def __init__(self, **kwargs):
-        """Initialize settings and auto-detect data directory for token persistence."""
+        """Initialize settings and auto-detect /app/data directory for persistence."""
         super().__init__(**kwargs)
-        # Auto-detect /app/data directory in Docker and use it for token_file
-        # This allows token.json to persist across container restarts
+
         if os.path.exists("/app/data") and os.path.isdir("/app/data"):
-            # Normalize the base directory path
             base_dir = os.path.abspath(os.path.realpath("/app/data"))
+        else:
+            base_dir = os.path.abspath(os.path.realpath("."))
 
-            if os.path.isabs(self.token_file):
-                # If token_file is absolute, verify it's within /app/data
-                resolved_path = os.path.abspath(os.path.realpath(self.token_file))
-                # Unsafe conditions: path traversal, points to base_dir, or is a directory
-                if (
-                    not resolved_path.startswith(base_dir + os.sep)
-                    or resolved_path == base_dir
-                    or os.path.isdir(resolved_path)
-                ):
-                    # Absolute path unsafe - use safe fallback
-                    name = os.path.basename(self.token_file)
-                    if name in ("", "."):
-                        name = "token.json"
-                    self.token_file = os.path.join(base_dir, name)
-                else:
-                    # Valid absolute path within /app/data (file, not directory)
-                    self.token_file = resolved_path
-            else:
-                # Relative path - join and validate
-                candidate_path = os.path.join(base_dir, self.token_file)
-                resolved_path = os.path.abspath(os.path.realpath(candidate_path))
+        self.data_dir = base_dir
+        self.tokens_dir = os.path.join(base_dir, "tokens")
+        self.accounts_file = os.path.join(base_dir, "accounts.json")
+        os.makedirs(self.tokens_dir, exist_ok=True)
 
-                # Verify resolved path is within base_dir and is a file (prevents path traversal)
-                # Unsafe conditions: path traversal, points to base_dir, or is a directory
-                if (
-                    not resolved_path.startswith(base_dir + os.sep)
-                    or resolved_path == base_dir
-                    or os.path.isdir(resolved_path)
-                ):
-                    # Path traversal detected or directory path - use safe fallback with basename only
-                    name = os.path.basename(self.token_file)
-                    if name in ("", "."):
-                        name = "token.json"
-                    self.token_file = os.path.join(base_dir, name)
-                else:
-                    # Safe path - use resolved path (file, not directory)
-                    self.token_file = resolved_path
+        # Keep legacy token_file resolved inside base_dir for auto-migration
+        name = os.path.basename(self.token_file)
+        if name in ("", "."):
+            name = "token.json"
+        self.token_file = os.path.join(base_dir, name)
 
     # Gmail API
     scopes: list[str] = [
