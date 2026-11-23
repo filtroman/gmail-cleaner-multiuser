@@ -1,5 +1,5 @@
 """
-Gmail Download Operations
+GMail Download Operations
 -------------------------
 Functions for downloading email metadata as CSV.
 """
