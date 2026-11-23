@@ -1,5 +1,5 @@
 """
-Gmail Mark as Read Operations
+GMail Mark as Read Operations
 ------------------------------
 Functions for marking emails as read.
 """
@@ -47,7 +47,7 @@ def mark_emails_as_read(count: int = 100, filters: Optional[dict] = None):
         return
 
     state.reset_mark_read()
-    state.mark_read_status["message"] = "Connecting to Gmail..."
+    state.mark_read_status["message"] = "Connecting to GMail..."
 
     service, error = get_gmail_service()
     if error:
