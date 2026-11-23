@@ -1,5 +1,5 @@
 """
-Gmail Delete Operations
+GMail Delete Operations
 -----------------------
 Functions for deleting emails and scanning senders or repeated subjects.
 """
@@ -70,7 +70,7 @@ def scan_senders_for_delete(
         group_by = "sender"
 
     state.reset_delete_scan()
-    state.delete_scan_status["message"] = "Connecting to Gmail..."
+    state.delete_scan_status["message"] = "Connecting to GMail..."
 
     service, error = get_gmail_service()
     if error:
