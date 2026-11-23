@@ -1,5 +1,5 @@
 """
-Gmail Service Module
+GMail Service Module
 ---------------------
 Core Gmail operations: scanning, unsubscribing, marking read, deleting.
 
