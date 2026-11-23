@@ -1,5 +1,5 @@
 """
-Gmail Scanning Operations
+GMail Scanning Operations
 --------------------------
 Functions for scanning emails to find unsubscribe links.
 """
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 def scan_emails(limit: int = 500, filters: Optional[dict] = None):
-    """Scan emails for unsubscribe links using Gmail Batch API with rate-limit protection."""
+    """Scan emails for unsubscribe links using GMail Batch API with rate-limit protection."""
     if limit <= 0:
         state.reset_scan()
         state.scan_status["error"] = "Limit must be greater than 0"
@@ -32,7 +32,7 @@ def scan_emails(limit: int = 500, filters: Optional[dict] = None):
         return
 
     state.reset_scan()
-    state.scan_status["message"] = "Connecting to Gmail..."
+    state.scan_status["message"] = "Connecting to GMail..."
 
     service, error = get_gmail_service()
     if error:
