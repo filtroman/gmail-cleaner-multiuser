@@ -355,6 +355,40 @@ def get_gmail_service():
         logger.error(f"Failed to build Gmail service: {e}", exc_info=True)
         return None, f"Failed to connect to Gmail API: {str(e)}"
 
+DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
+
+
+def get_drive_service():
+    """Get authenticated Google Drive API service for the active account."""
+    _migrate_legacy_token()
+    active_email = _get_active_email()
+    if not active_email:
+        return None, "Not signed in. Please sign in with Google first."
+
+    token_path = _get_token_path_for_email(active_email)
+    if not token_path or not os.path.exists(token_path):
+        return None, f"No token found for {active_email}."
+
+    # Inspect actual granted scopes stored in the token JSON
+    try:
+        with open(token_path, "r") as f:
+            token_data = json.load(f)
+        granted_scopes = token_data.get("scopes") or []
+        if granted_scopes and DRIVE_SCOPE not in granted_scopes:
+            return None, "NEEDS_DRIVE_SCOPE"
+    except Exception:
+        pass
+
+    creds = _load_valid_creds_for_email(active_email)
+    if not creds:
+        return None, f"Session expired for {active_email}. Please sign in again."
+
+    try:
+        service = build("drive", "v3", credentials=creds)
+        return service, None
+    except Exception as e:
+        logger.error(f"Failed to build Drive service: {e}", exc_info=True)
+        return None, f"Failed to connect to Google Drive API: {str(e)}"
 
 def switch_account(email: str) -> dict:
     """Switch the active Gmail account."""
