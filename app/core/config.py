@@ -74,10 +74,11 @@ class Settings(BaseSettings):
             name = "token.json"
         self.token_file = os.path.join(base_dir, name)
 
-    # Gmail API
+    # Gmail & Drive APIs
     scopes: list[str] = [
         "https://www.googleapis.com/auth/gmail.readonly",
         "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/drive",
     ]
 
     model_config = SettingsConfigDict(
