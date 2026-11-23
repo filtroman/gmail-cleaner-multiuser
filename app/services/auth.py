@@ -1,84 +1,216 @@
 """
 Authentication Service
 ----------------------
-Handles OAuth2 authentication with Gmail API.
+Handles multi-account OAuth2 authentication with Gmail API via FastAPI callback.
 """
 
 import json
 import logging
 import os
-import platform
-import shutil
+import re
 import threading
 import time
-from http.server import HTTPServer
 
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
 from app.core import settings, state
-from app.services.auth_handlers import OAuthCallbackHandler
 
 logger = logging.getLogger(__name__)
 
-
-# Track auth in progress
-_auth_in_progress = {"active": False}
+_accounts_lock = threading.Lock()
 
 
 def _is_file_empty(file_path: str) -> bool:
-    """Check if a file exists and is empty.
-
-    Args:
-        file_path: Path to the file to check.
-
-    Returns:
-        True if file exists and is empty, False otherwise.
-    """
+    """Check if a file exists and is empty."""
     if not os.path.exists(file_path):
         return False
     try:
         with open(file_path, "r") as f:
-            content = f.read().strip()
-            return not content
+            return not f.read().strip()
     except OSError:
-        # If we can't read it, consider it not empty to avoid false positives
         return False
 
 
+def _sanitize_filename(email: str) -> str:
+    """Convert an email address into a safe filename inside tokens_dir."""
+    safe = re.sub(r"[^a-zA-Z0-9._+-]", "_", email.strip().lower())
+    if not safe:
+        safe = "account"
+    filename = f"{safe}.json"
+    base_dir = os.path.abspath(os.path.realpath(settings.tokens_dir))
+    resolved = os.path.abspath(os.path.realpath(os.path.join(base_dir, filename)))
+    if not resolved.startswith(base_dir + os.sep):
+        raise ValueError("Invalid account path")
+    return filename
+
+
+def _load_accounts_index() -> dict:
+    """Load accounts.json index safely."""
+    os.makedirs(settings.tokens_dir, exist_ok=True)
+    data = {"active": None, "accounts": {}}
+    if os.path.exists(settings.accounts_file) and not _is_file_empty(
+        settings.accounts_file
+    ):
+        try:
+            with open(settings.accounts_file, "r") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                data["active"] = loaded.get("active")
+                accounts = loaded.get("accounts", {})
+                if isinstance(accounts, dict):
+                    data["accounts"] = accounts
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning(f"Failed to read accounts index: {e}")
+
+    # Prune entries whose token files no longer exist
+    cleaned_accounts = {}
+    for email, filename in data["accounts"].items():
+        token_path = os.path.join(settings.tokens_dir, os.path.basename(filename))
+        if os.path.exists(token_path) and not _is_file_empty(token_path):
+            cleaned_accounts[email] = os.path.basename(filename)
+    data["accounts"] = cleaned_accounts
+
+    if data["active"] not in data["accounts"]:
+        data["active"] = next(iter(data["accounts"]), None)
+
+    return data
+
+
+def _save_accounts_index(data: dict) -> None:
+    """Persist accounts.json index safely."""
+    os.makedirs(settings.tokens_dir, exist_ok=True)
+    with open(settings.accounts_file, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def _get_token_path_for_email(email: str) -> str | None:
+    """Get full path to token file for a given email."""
+    with _accounts_lock:
+        index = _load_accounts_index()
+        filename = index["accounts"].get(email)
+        if not filename:
+            return None
+        return os.path.join(settings.tokens_dir, os.path.basename(filename))
+
+
+def _save_account_token(email: str, creds: Credentials, make_active: bool = True) -> None:
+    """Save credentials for an email account and register it in accounts.json."""
+    with _accounts_lock:
+        index = _load_accounts_index()
+        filename = index["accounts"].get(email) or _sanitize_filename(email)
+        token_path = os.path.join(settings.tokens_dir, filename)
+        with open(token_path, "w") as f:
+            f.write(creds.to_json())
+        index["accounts"][email] = filename
+        if make_active or not index["active"]:
+            index["active"] = email
+        _save_accounts_index(index)
+
+
+def _remove_account(email: str) -> None:
+    """Delete an account's token file and remove it from accounts.json."""
+    with _accounts_lock:
+        index = _load_accounts_index()
+        filename = index["accounts"].pop(email, None)
+        if filename:
+            token_path = os.path.join(settings.tokens_dir, os.path.basename(filename))
+            try:
+                if os.path.exists(token_path):
+                    os.remove(token_path)
+            except OSError as e:
+                logger.warning(f"Failed to remove token file for {email}: {e}")
+        if index["active"] == email:
+            index["active"] = next(iter(index["accounts"]), None)
+        _save_accounts_index(index)
+
+
+def _migrate_legacy_token() -> None:
+    """Auto-migrate legacy single token.json into tokens/ if present."""
+    if not os.path.exists(settings.token_file) or _is_file_empty(settings.token_file):
+        return
+    try:
+        creds = Credentials.from_authorized_user_file(
+            settings.token_file, settings.scopes
+        )
+        if not creds:
+            return
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        service = build("gmail", "v1", credentials=creds)
+        profile = service.users().getProfile(userId="me").execute()
+        email = profile.get("emailAddress")
+        if email:
+            _save_account_token(email, creds, make_active=True)
+            os.remove(settings.token_file)
+            logger.info(f"Migrated legacy token.json for {email}")
+    except Exception as e:
+        logger.warning(f"Could not migrate legacy token.json: {e}")
+
+
 def is_web_auth_mode() -> bool:
-    """Check if we should use web-based auth (for Docker/headless)."""
+    """Check if we should use web-based auth."""
     return settings.web_auth
 
 
-def needs_auth_setup() -> bool:
-    """Check if authentication is needed."""
-    if os.path.exists(settings.token_file):
-        # Check if token file is empty
-        if _is_file_empty(settings.token_file):
-            logger.error(f"Token file {settings.token_file} is empty")
-            try:
-                os.remove(settings.token_file)
-            except OSError:
-                pass
-            return True
+def list_accounts() -> list[str]:
+    """Return list of saved account emails."""
+    _migrate_legacy_token()
+    with _accounts_lock:
+        index = _load_accounts_index()
+        return list(index["accounts"].keys())
 
-        try:
-            creds = Credentials.from_authorized_user_file(
-                settings.token_file, settings.scopes
-            )
-            if creds and (creds.valid or creds.refresh_token):
-                return False
-        except (ValueError, OSError) as e:
-            # Token file exists but is invalid/corrupted
-            logger.warning(f"Failed to load credentials from token file: {e}")
-        except Exception as e:
-            # Unexpected error - log it for debugging
-            logger.error(f"Unexpected error checking auth setup: {e}", exc_info=True)
-    return True
+
+def _get_active_email() -> str | None:
+    """Get the currently active email address."""
+    with _accounts_lock:
+        index = _load_accounts_index()
+        return index.get("active")
+
+
+def _try_refresh_creds(creds: Credentials, email: str) -> Credentials | None:
+    """Attempt to refresh expired credentials and save to token file."""
+    try:
+        creds.refresh(Request())
+        _save_account_token(email, creds, make_active=False)
+        return creds
+    except RefreshError as e:
+        logger.warning(f"Token refresh failed for {email}: {e}")
+        _remove_account(email)
+        return None
+
+
+def _load_valid_creds_for_email(email: str) -> Credentials | None:
+    """Load and refresh credentials for a specific email if needed."""
+    token_path = _get_token_path_for_email(email)
+    if not token_path or not os.path.exists(token_path):
+        return None
+    try:
+        creds = Credentials.from_authorized_user_file(token_path, settings.scopes)
+    except (ValueError, OSError) as e:
+        logger.warning(f"Corrupted token file for {email}: {e}")
+        _remove_account(email)
+        return None
+
+    if creds and creds.valid:
+        return creds
+    if creds and creds.expired and creds.refresh_token:
+        return _try_refresh_creds(creds, email)
+
+    _remove_account(email)
+    return None
+
+
+def needs_auth_setup() -> bool:
+    """Check if authentication is needed (no valid accounts)."""
+    _migrate_legacy_token()
+    active_email = _get_active_email()
+    if not active_email:
+        return True
+    return _load_valid_creds_for_email(active_email) is None
 
 
 def get_web_auth_status() -> dict:
@@ -86,599 +218,223 @@ def get_web_auth_status() -> dict:
     return {
         "needs_setup": needs_auth_setup(),
         "web_auth_mode": is_web_auth_mode(),
-        "has_credentials": os.path.exists(settings.credentials_file),
+        "has_credentials": _get_credentials_path() is not None,
         "pending_auth_url": state.pending_auth_url.get("url"),
     }
 
 
-def _try_refresh_creds(creds: Credentials) -> Credentials | None:
-    """Attempt to refresh expired credentials and save to token file.
-
-    Args:
-        creds: Credentials that are expired but have a refresh_token.
-
-    Returns:
-        Refreshed credentials if successful, None if refresh failed.
-    """
-    try:
-        creds.refresh(Request())
-        try:
-            with open(settings.token_file, "w") as token:
-                token.write(creds.to_json())
-        except OSError:
-            # Token file write failed - creds are refreshed in memory but not saved
-            logger.exception("Failed to save refreshed token")
-        return creds
-    except RefreshError as e:
-        # Refresh token is invalid or expired
-        logger.warning(f"Token refresh failed: {e}")
-        # Clear invalid token file
-        try:
-            os.remove(settings.token_file)
-        except OSError:
-            pass
-        return None
-
-
 def _get_credentials_path() -> str | None:
-    """Get credentials - from file or create from env var.
-
-    Returns:
-        Path to valid credentials file, or None if not found or invalid.
-    """
+    """Get credentials - from file or create from env var."""
     if os.path.exists(settings.credentials_file):
-        # Check if credentials file is empty
         if _is_file_empty(settings.credentials_file):
-            logger.error(
-                f"Credentials file {settings.credentials_file} is empty. "
-                "Please check your credentials.json file and ensure it contains valid OAuth credentials."
-            )
+            logger.error(f"Credentials file {settings.credentials_file} is empty.")
             return None
-
-        # Validate that the file contains valid JSON
         try:
             with open(settings.credentials_file, "r") as f:
-                content = f.read().strip()
-                # Try to parse as JSON to validate
-                json.loads(content)
+                json.loads(f.read().strip())
             return settings.credentials_file
-        except FileNotFoundError:
-            # File was deleted between exists() check and open() - race condition
-            # or test mocking issue - treat as if file doesn't exist
-            return None
-        except json.JSONDecodeError as e:
-            logger.error(
-                f"Credentials file {settings.credentials_file} contains invalid JSON: {e}",
-                exc_info=True,
-            )
-            return None
-        except OSError as e:
-            logger.error(
-                f"Failed to read credentials file {settings.credentials_file}: {e}",
-                exc_info=True,
-            )
+        except Exception as e:
+            logger.error(f"Failed to read credentials file: {e}")
             return None
 
-    # Check for env var (for cloud deployment)
     env_creds = os.environ.get("GOOGLE_CREDENTIALS")
-    if env_creds:  # Check if key exists and is not empty
+    if env_creds:
         try:
-            # Validate JSON before writing
             json.loads(env_creds)
             with open(settings.credentials_file, "w") as f:
                 f.write(env_creds)
             return settings.credentials_file
-        except (json.JSONDecodeError, TypeError):
-            logger.error(
-                "GOOGLE_CREDENTIALS environment variable contains invalid JSON/type",
-                exc_info=True,
-            )
-            return None
-        except OSError as e:
-            logger.error(f"Failed to write credentials file: {e}", exc_info=True)
-            # Don't create invalid file - return None
+        except Exception as e:
+            logger.error(f"Failed to process GOOGLE_CREDENTIALS env var: {e}")
             return None
 
     return None
 
 
-def get_gmail_service():
-    """Get authenticated Gmail API service.
+def create_oauth_url(redirect_uri: str) -> str:
+    """Start an OAuth flow and return the Google authorization URL."""
+    creds_path = _get_credentials_path()
+    if not creds_path:
+        raise ValueError(
+            "credentials.json not found or invalid! Please check your credentials.json file."
+        )
 
-    Returns:
-        tuple: (service, error_message) - service is None if auth needed
-    """
-    creds = None
+    flow = Flow.from_client_secrets_file(
+        creds_path,
+        scopes=settings.scopes,
+        redirect_uri=redirect_uri,
+    )
 
-    if os.path.exists(settings.token_file):
-        # Check if token file is empty
-        if _is_file_empty(settings.token_file):
-            logger.error(f"Token file {settings.token_file} is empty")
-            try:
-                os.remove(settings.token_file)
-            except OSError:
-                pass
-            creds = None
-        else:
-            try:
-                creds = Credentials.from_authorized_user_file(
-                    settings.token_file, settings.scopes
-                )
-            except (ValueError, OSError) as e:
-                # Token file is corrupted or invalid
-                logger.warning(f"Failed to load credentials from token file: {e}")
-                # Delete corrupted token file
-                try:
-                    os.remove(settings.token_file)
-                except OSError:
-                    pass
-                creds = None
+    authorization_url, oauth_state = flow.authorization_url(
+        access_type="offline",
+        prompt="consent",
+    )
 
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds = _try_refresh_creds(creds)
+    with state.oauth_state_lock:
+        # Clean up expired flows older than 15 minutes
+        now = time.time()
+        expired = [
+            k
+            for k, v in state.pending_flows.items()
+            if now - v.get("created_at", 0) > 900
+        ]
+        for k in expired:
+            state.pending_flows.pop(k, None)
 
-        # If creds is still None or invalid after refresh attempt, trigger OAuth
-        if not creds or not creds.valid:
-            # Prevent multiple OAuth attempts (thread-safe check)
-            # Note: Small race condition window, but acceptable for this use case
-            if _auth_in_progress.get("active", False):
-                return (
-                    None,
-                    "Sign-in already in progress. Please complete the authorization in your browser.",
-                )
+        state.pending_flows[oauth_state] = {
+            "flow": flow,
+            "created_at": now,
+        }
+        state.oauth_state["state"] = oauth_state
 
-            creds_path = _get_credentials_path()
-            if not creds_path:
-                # Check if credentials file exists and is empty for more specific error message
-                if os.path.exists(settings.credentials_file) and _is_file_empty(
-                    settings.credentials_file
-                ):
-                    return (
-                        None,
-                        "credentials.json file is empty! Please check your credentials.json file and ensure it contains valid OAuth credentials.",
-                    )
-                return (
-                    None,
-                    "credentials.json not found or contains invalid JSON! Please check your credentials.json file and follow setup instructions.",
-                )
+    logger.info(f"Generated OAuth URL with redirect_uri={redirect_uri}")
+    return authorization_url
 
-            # Start OAuth in background thread so server stays responsive
-            _auth_in_progress["active"] = True
 
-            def run_oauth() -> None:
-                try:
-                    # Try to create the OAuth flow - this will fail if credentials.json is invalid
-                    try:
-                        flow = InstalledAppFlow.from_client_secrets_file(
-                            creds_path, settings.scopes
-                        )
-                    except (
-                        ValueError,
-                        json.JSONDecodeError,
-                        OSError,
-                        FileNotFoundError,
-                    ) as e:
-                        # This error happens when loading credentials file - definitely a credentials issue
-                        error_msg = str(e)
-                        logger.error(
-                            f"Failed to load credentials file {creds_path}: {e}",
-                            exc_info=True,
-                        )
-                        if (
-                            "Expecting value" in error_msg
-                            or "char 0" in error_msg
-                            or isinstance(e, json.JSONDecodeError)
-                        ):
-                            print(
-                                "ERROR: credentials.json file is empty or contains invalid JSON. "
-                                "Please check your credentials.json file and ensure it contains valid OAuth credentials."
-                            )
-                        elif isinstance(e, FileNotFoundError):
-                            print(
-                                f"ERROR: credentials.json file not found at {creds_path}. "
-                                "Please check your credentials.json file path."
-                            )
-                        else:
-                            print(
-                                f"ERROR: Failed to read credentials file: {e}. "
-                                "Please check your credentials.json file."
-                            )
-                        return  # Exit early - can't proceed without valid credentials
+def complete_oauth_callback(
+    oauth_state: str | None, code: str | None, error: str | None
+) -> tuple[bool, str]:
+    """Process OAuth callback from FastAPI route, save account token, and set active."""
+    if error:
+        return False, f"Google returned an error: {error}"
+    if not oauth_state:
+        return False, "Missing OAuth state parameter."
+    if not code:
+        return False, "Missing authorization code."
 
-                    # For Docker: bind to 0.0.0.0 so callback can reach container
-                    # For local: bind to localhost for security
-                    bind_address = "0.0.0.0" if is_web_auth_mode() else "localhost"  # nosec B104
+    with state.oauth_state_lock:
+        flow_entry = state.pending_flows.pop(oauth_state, None)
 
-                    # Handle custom external port (e.g., Docker port mapping like 18767:8767)
-                    # The server listens on the internal port, but the redirect URI uses the external port
-                    redirect_port = (
-                        settings.oauth_external_port
-                        if isinstance(settings.oauth_external_port, int)
-                        else settings.oauth_port
-                    )
+    if not flow_entry:
+        return False, "OAuth state expired or invalid. Please try signing in again."
 
-                    # Validate port ranges (1-65535)
-                    if not isinstance(settings.oauth_port, int) or not (
-                        1 <= settings.oauth_port <= 65535
-                    ):
-                        raise ValueError(
-                            f"Invalid oauth_port: {settings.oauth_port}. "
-                            "Port must be between 1 and 65535."
-                        )
-                    if not isinstance(redirect_port, int) or not (
-                        1 <= redirect_port <= 65535
-                    ):
-                        raise ValueError(
-                            f"Invalid redirect port: {redirect_port}. "
-                            "Port must be between 1 and 65535."
-                        )
+    flow: Flow = flow_entry["flow"]
 
-                    # Check if we should auto-open browser
-                    # In Docker/web mode: don't open browser, print URL to logs
-                    # On Windows/Mac/Linux desktop: auto-open browser
-                    if is_web_auth_mode():
-                        open_browser = False
-                    elif platform.system() == "Windows":
-                        open_browser = True
-                    elif platform.system() == "Darwin":  # macOS
-                        open_browser = True
-                    else:  # Linux
-                        open_browser = bool(
-                            shutil.which("xdg-open") or os.environ.get("DISPLAY")
-                        )
-
-                    # If external port is different, manually handle OAuth flow
-                    # because run_local_server() constructs redirect URI from port parameter
-                    if redirect_port != settings.oauth_port:
-                        # Validate oauth_host is not empty
-                        if not settings.oauth_host or not settings.oauth_host.strip():
-                            raise ValueError(
-                                "oauth_host cannot be empty when using custom external port. "
-                                "Please set OAUTH_HOST environment variable."
-                            )
-
-                        # Construct redirect URI using external port
-                        redirect_uri = f"http://{settings.oauth_host}:{redirect_port}/"
-                        flow.redirect_uri = redirect_uri
-                        logger.info(
-                            f"Using custom redirect URI {redirect_uri} "
-                            f"(internal port: {settings.oauth_port}, external port: {redirect_port})"
-                        )
-
-                        # Manually handle OAuth flow with custom redirect URI
-                        authorization_url, oauth_state = flow.authorization_url(
-                            access_type="offline", prompt="consent"
-                        )
-
-                        # Validate authorization URL was generated
-                        if not authorization_url or not isinstance(
-                            authorization_url, str
-                        ):
-                            raise ValueError(
-                                "Failed to generate OAuth authorization URL. "
-                                "Please check your credentials.json configuration."
-                            )
-
-                        # Store OAuth state for CSRF protection
-                        with state.oauth_state_lock:
-                            state.oauth_state["state"] = oauth_state
-                        logger.debug(
-                            f"Stored OAuth state for CSRF protection: {oauth_state[:20]}..."
-                            if oauth_state and len(oauth_state) > 20
-                            else f"Stored OAuth state: {oauth_state}"
-                        )
-
-                        # Set pending auth URL for web auth mode
-                        if is_web_auth_mode():
-                            state.pending_auth_url["url"] = authorization_url
-
-                        # Create a simple HTTP server to handle the callback
-                        callback_event = threading.Event()
-                        callback_lock = threading.Lock()
-                        callback_data: dict = {"code": None, "error": None}
-                        auth_code = None
-                        error_message = None
-
-                        # Create handler factory with thread-safe primitives
-                        def handler_factory(*args, **kwargs):
-                            return OAuthCallbackHandler(
-                                callback_event,
-                                callback_lock,
-                                callback_data,
-                                *args,
-                                **kwargs,
-                            )
-
-                        # Start the callback server with error handling
-                        server = None
-                        try:
-                            try:
-                                server = HTTPServer(
-                                    (bind_address, settings.oauth_port),
-                                    handler_factory,
-                                )
-                            except OSError as e:
-                                # Check for port already in use error (platform-independent)
-                                error_str = str(e).lower()
-                                if (
-                                    "address already in use" in error_str
-                                    or (
-                                        hasattr(e, "errno") and e.errno in (98, 10048)
-                                    )  # Linux: 98, Windows: 10048
-                                ):
-                                    raise OSError(
-                                        f"Port {settings.oauth_port} is already in use. "
-                                        "Please stop any other service using this port or change the port configuration."
-                                    ) from e
-                                raise
-
-                            # Print authorization URL
-                            print(
-                                f"Please visit this URL to authorize the application: {authorization_url}"
-                            )
-                            logger.info(f"OAuth authorization URL: {authorization_url}")
-
-                            if open_browser:
-                                try:
-                                    import webbrowser
-
-                                    webbrowser.open(authorization_url)
-                                except Exception as e:
-                                    logger.warning(f"Failed to open browser: {e}")
-
-                            # Wait for the callback (with timeout)
-                            timeout = 300  # 5 minutes
-                            start_time = time.time()
-
-                            # Set socket timeout to allow periodic timeout checks
-                            server.timeout = 1.0  # 1 second timeout for handle_request
-
-                            while not callback_event.is_set():
-                                elapsed = time.time() - start_time
-                                if elapsed > timeout:
-                                    raise TimeoutError(
-                                        f"OAuth authorization timed out after {timeout} seconds. "
-                                        "Please try signing in again."
-                                    )
-
-                                try:
-                                    server.handle_request()
-                                except Exception as e:
-                                    logger.error(
-                                        f"Error handling OAuth callback request: {e}",
-                                        exc_info=True,
-                                    )
-                                    # Continue waiting unless it's a critical error
-                                    error_str = str(e).lower()
-                                    if "address already in use" in error_str or (
-                                        isinstance(e, OSError)
-                                        and hasattr(e, "errno")
-                                        and e.errno in (98, 10048)
-                                    ):
-                                        raise
-
-                                # Wait for callback event with short timeout to allow periodic checks
-                                if not callback_event.wait(timeout=0.1):
-                                    # Timeout - continue loop to check elapsed time
-                                    continue
-
-                            # Read callback data under lock
-                            with callback_lock:
-                                auth_code = callback_data["code"]
-                                error_message = callback_data["error"]
-
-                            if error_message:
-                                raise ValueError(f"OAuth error: {error_message}")
-
-                            if not auth_code:
-                                raise ValueError("No authorization code received")
-
-                            # Exchange authorization code for credentials
-                            try:
-                                flow.fetch_token(code=auth_code)
-                            except Exception as e:
-                                logger.error(
-                                    f"Failed to exchange authorization code for token: {e}",
-                                    exc_info=True,
-                                )
-                                raise ValueError(
-                                    f"Failed to exchange authorization code: {str(e)}. "
-                                    "Please try signing in again."
-                                ) from e
-
-                            new_creds = flow.credentials
-
-                        finally:
-                            # Always close the server, even if an exception occurred
-                            if server is not None:
-                                try:
-                                    server.server_close()
-                                except Exception as e:
-                                    logger.warning(
-                                        f"Error closing OAuth callback server: {e}"
-                                    )
-                    else:
-                        # Use standard run_local_server when ports match
-                        new_creds = flow.run_local_server(
-                            port=settings.oauth_port,
-                            bind_addr=bind_address,
-                            host=settings.oauth_host,
-                            open_browser=open_browser,
-                            prompt="consent",
-                        )
-
-                    # Validate credentials were obtained
-                    if new_creds is None:
-                        raise ValueError(
-                            "OAuth flow completed but no credentials were obtained"
-                        )
-
-                    # Save token with error handling
-                    try:
-                        with open(settings.token_file, "w") as token:
-                            token.write(new_creds.to_json())
-                        print("OAuth complete! Token saved.")
-                    except OSError as e:
-                        logger.error(f"Failed to save token file: {e}", exc_info=True)
-                        print(f"OAuth completed but failed to save token: {e}")
-                        raise  # Re-raise so outer exception handler can log it
-                except (ValueError, json.JSONDecodeError) as e:
-                    # JSON parsing errors from OAuth callback (shouldn't happen if credentials were valid)
-                    error_msg = str(e)
-                    logger.error(
-                        "OAuth callback received empty or invalid response. "
-                        "This usually means the authorization was cancelled or the callback URL is incorrect.",
-                        exc_info=True,
-                    )
-                    print(
-                        "OAuth error: Authorization cancelled or invalid callback. "
-                        "Please try signing in again and complete the authorization in your browser."
-                    )
-                except RefreshError as e:
-                    # Token refresh errors
-                    logger.error(f"OAuth token exchange failed: {e}", exc_info=True)
-                    print(
-                        "OAuth error: Token exchange failed. Please try again. "
-                        "If this persists, check your credentials.json configuration."
-                    )
-                except TimeoutError as e:
-                    # Timeout errors
-                    logger.error(f"OAuth timeout: {e}", exc_info=True)
-                    print(f"OAuth error: {e}")
-                except OSError as e:
-                    # Port binding and other OS errors
-                    logger.error(f"OAuth system error: {e}", exc_info=True)
-                    error_str = str(e)
-                    if (
-                        "Address already in use" in error_str
-                        or "port" in error_str.lower()
-                    ):
-                        print(
-                            f"OAuth error: Port conflict - {e}. "
-                            "Please check if another service is using the OAuth port or change the port configuration."
-                        )
-                    else:
-                        print(f"OAuth error: System error - {e}")
-                except Exception as e:
-                    # Other OAuth errors
-                    logger.error(f"OAuth error: {e}", exc_info=True)
-                    error_str = str(e)
-                    if "redirect_uri_mismatch" in error_str.lower():
-                        print(
-                            "OAuth error: Redirect URI mismatch. "
-                            "Please check your credentials.json redirect URI configuration."
-                        )
-                    elif "access_denied" in error_str.lower():
-                        print(
-                            "OAuth error: Access denied. Please grant the requested permissions."
-                        )
-                    elif "invalid_grant" in error_str.lower():
-                        print(
-                            "OAuth error: Invalid authorization code. "
-                            "The authorization may have expired. Please try signing in again."
-                        )
-                    else:
-                        print(f"OAuth error: {e}")
-                finally:
-                    # Always reset auth state, even on error
-                    _auth_in_progress["active"] = False
-                    state.pending_auth_url["url"] = None
-                    with state.oauth_state_lock:
-                        state.oauth_state["state"] = None
-
-            oauth_thread = threading.Thread(target=run_oauth, daemon=True)
-            oauth_thread.start()
-
-            return (
-                None,
-                "Sign-in started. Please complete authorization in your browser.",
-            )
-
-    # Build Gmail service - handle potential errors
     try:
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+        if not creds:
+            return False, "No credentials received from Google."
+
         service = build("gmail", "v1", credentials=creds)
+        profile = service.users().getProfile(userId="me").execute()
+        email = profile.get("emailAddress")
+        if not email:
+            return False, "Could not determine Gmail address for this account."
+
+        _save_account_token(email, creds, make_active=True)
+        state.current_user = {"email": email, "logged_in": True}
+        state.reset_all_operations()
+        logger.info(f"OAuth completed successfully for {email}")
+        return True, email
     except Exception as e:
-        logger.error(f"Failed to build Gmail service: {e}", exc_info=True)
-        # Return error instead of crashing
+        logger.exception("Failed to complete OAuth callback")
+        return False, f"OAuth token exchange failed: {str(e)}"
+
+
+def get_gmail_service():
+    """Get authenticated Gmail API service for the active account."""
+    _migrate_legacy_token()
+    active_email = _get_active_email()
+    if not active_email:
+        return None, "Not signed in. Please click 'Sign in with Google' first."
+
+    creds = _load_valid_creds_for_email(active_email)
+    if not creds:
         return (
             None,
-            f"Failed to connect to Gmail API: {str(e)}. Please try signing in again.",
+            f"Session expired for {active_email}. Please sign in again.",
         )
 
     try:
-        profile = service.users().getProfile(userId="me").execute()
-        state.current_user["email"] = profile.get("emailAddress", "Unknown")
+        service = build("gmail", "v1", credentials=creds)
+        state.current_user["email"] = active_email
         state.current_user["logged_in"] = True
-    except Exception:
-        state.current_user["email"] = "Unknown"
-        state.current_user["logged_in"] = True
+        return service, None
+    except Exception as e:
+        logger.error(f"Failed to build Gmail service: {e}", exc_info=True)
+        return None, f"Failed to connect to Gmail API: {str(e)}"
 
-    return service, None
 
+def switch_account(email: str) -> dict:
+    """Switch the active Gmail account."""
+    email = email.strip()
+    creds = _load_valid_creds_for_email(email)
+    if not creds:
+        raise ValueError(f"Account '{email}' is not signed in or its token expired.")
 
-def sign_out() -> dict:
-    """Sign out by removing the token file."""
-    if os.path.exists(settings.token_file):
-        os.remove(settings.token_file)
+    with _accounts_lock:
+        index = _load_accounts_index()
+        if email not in index["accounts"]:
+            raise ValueError(f"Account '{email}' not found.")
+        index["active"] = email
+        _save_accounts_index(index)
 
-    # Reset state
-    state.current_user = {"email": None, "logged_in": False}
-    state.reset_scan()
-    state.reset_delete_scan()
-    state.reset_mark_read()
+    state.current_user = {"email": email, "logged_in": True}
+    state.reset_all_operations()
+    logger.info(f"Switched active account to {email}")
 
-    print("Signed out - results cleared")
     return {
         "success": True,
-        "message": "Signed out successfully",
+        "email": email,
+        "accounts": list_accounts(),
+    }
+
+
+def sign_out(email: str | None = None) -> dict:
+    """Sign out of a specific account (or current active account)."""
+    target_email = email or _get_active_email()
+    if target_email:
+        _remove_account(target_email)
+
+    next_email = _get_active_email()
+    if next_email and _load_valid_creds_for_email(next_email):
+        state.current_user = {"email": next_email, "logged_in": True}
+    else:
+        state.current_user = {"email": None, "logged_in": False}
+
+    state.reset_all_operations()
+    return {
+        "success": True,
+        "message": f"Signed out {target_email or ''}".strip(),
+        "active_email": state.current_user["email"],
+        "accounts": list_accounts(),
         "results_cleared": True,
     }
 
 
 def check_login_status() -> dict:
-    """Check if user is logged in and get their email."""
-    if os.path.exists(settings.token_file):
-        # Check if token file is empty
-        if _is_file_empty(settings.token_file):
-            logger.error(f"Token file {settings.token_file} is empty")
-            try:
-                os.remove(settings.token_file)
-            except OSError:
-                pass
-        else:
-            try:
-                creds = Credentials.from_authorized_user_file(
-                    settings.token_file, settings.scopes
-                )
-                if creds and creds.valid:
-                    service = build("gmail", "v1", credentials=creds)
-                    profile = service.users().getProfile(userId="me").execute()
-                    state.current_user["email"] = profile.get("emailAddress", "Unknown")
-                    state.current_user["logged_in"] = True
-                    return state.current_user.copy()
-                elif creds and creds.expired and creds.refresh_token:
-                    refreshed_creds = _try_refresh_creds(creds)
-                    if refreshed_creds:
-                        service = build("gmail", "v1", credentials=refreshed_creds)
-                        profile = service.users().getProfile(userId="me").execute()
-                        state.current_user["email"] = profile.get(
-                            "emailAddress", "Unknown"
-                        )
-                        state.current_user["logged_in"] = True
-                        return state.current_user.copy()
-            except (ValueError, OSError) as e:
-                # Token file is invalid/corrupted
-                logger.warning(f"Failed to load or refresh credentials: {e}")
-                # Clear corrupted token file
-                try:
-                    os.remove(settings.token_file)
-                except OSError:
-                    pass
-            except Exception as e:
-                # API errors, network issues, etc.
-                logger.error(f"Error checking login status: {e}", exc_info=True)
+    """Check login status for active account and return all saved accounts."""
+    _migrate_legacy_token()
+    accounts = list_accounts()
+    active_email = _get_active_email()
+
+    if active_email:
+        creds = _load_valid_creds_for_email(active_email)
+        if creds:
+            state.current_user["email"] = active_email
+            state.current_user["logged_in"] = True
+            return {
+                "email": active_email,
+                "logged_in": True,
+                "accounts": list_accounts(),
+            }
+        # Active token failed/expired; check if another valid account exists
+        accounts = list_accounts()
+        active_email = _get_active_email()
+        if active_email and _load_valid_creds_for_email(active_email):
+            state.current_user["email"] = active_email
+            state.current_user["logged_in"] = True
+            return {
+                "email": active_email,
+                "logged_in": True,
+                "accounts": list_accounts(),
+            }
 
     state.current_user["email"] = None
     state.current_user["logged_in"] = False
-    return state.current_user.copy()
+    return {
+        "email": None,
+        "logged_in": False,
+        "accounts": accounts,
+    }
