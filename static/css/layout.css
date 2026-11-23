@@ -103,12 +103,34 @@
     padding: 8px 0;
     display: flex;
     flex-direction: column;
-    transition: width 0.2s;
+    transition: width 0.2s ease;
     overflow: hidden;
+    flex-shrink: 0;
 }
 
 .sidebar.collapsed {
     width: 72px;
+}
+
+.sidebar.collapsed .compose-btn {
+    padding: 12px;
+    margin: 8px 12px 12px;
+    justify-content: center;
+}
+
+.sidebar.collapsed .compose-btn span,
+.sidebar.collapsed .nav-item span,
+.sidebar.collapsed .sidebar-footer {
+    display: none;
+}
+
+.sidebar.collapsed .nav-item {
+    padding: 0;
+    justify-content: center;
+    border-radius: var(--radius-full);
+    width: 44px;
+    height: 44px;
+    margin: 4px auto;
 }
 
 .compose-btn {
@@ -126,15 +148,17 @@
     font-weight: 500;
     color: var(--text-primary);
     transition: box-shadow 0.2s, background 0.2s;
+    white-space: nowrap;
 }
 
 .compose-btn:hover {
     box-shadow: var(--shadow-md);
-    background: #fafafb;
+    background: var(--hover-bg);
 }
 
 .compose-btn svg {
     color: var(--text-primary);
+    flex-shrink: 0;
 }
 
 .nav-menu {
@@ -148,7 +172,7 @@
     align-items: center;
     gap: 16px;
     padding: 0 24px;
-    height: 32px;
+    height: 36px;
     border-radius: 0 var(--radius-full) var(--radius-full) 0;
     text-decoration: none;
     color: var(--text-primary);
@@ -156,6 +180,7 @@
     font-weight: 500;
     transition: background 0.2s;
     margin: 2px 0;
+    white-space: nowrap;
 }
 
 .nav-item:hover {
@@ -204,6 +229,7 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
+    min-width: 0;
 }
 
 .main-content-inner {
