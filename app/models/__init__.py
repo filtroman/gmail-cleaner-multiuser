@@ -21,4 +21,6 @@ from .schemas import (
     UnreadCountResponse,
     UnsubscribeResponse,
     DeleteResponse,
+    DriveTrashFileRequest, 
+    GmailTrashMessageRequest,
 )
