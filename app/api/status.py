@@ -26,6 +26,7 @@ from app.services import (
     get_label_operation_status,
     get_archive_status,
     get_important_status,
+    analyze_storage,
 )
 
 router = APIRouter(prefix="/api", tags=["Status"])
@@ -242,4 +243,16 @@ async def api_important_status():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get important status",
+        ) from e
+
+@router.get("/storage/analyze")
+async def api_storage_analyze(min_email_mb: int = 5):
+    """Analyze Google One storage across Drive and large Gmail emails."""
+    try:
+        return analyze_storage(min_email_mb=min_email_mb)
+    except Exception as e:
+        logger.exception("Error analyzing storage")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to analyze storage",
         ) from e
