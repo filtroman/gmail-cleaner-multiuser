@@ -86,11 +86,9 @@ class FiltersModel(BaseModel):
     def validate_sender(cls, v) -> Optional[str]:
         if v is None or v == "":
             return None
-        # Allow email addresses or domain names
         sender = v.strip()
         if not sender:
             return None
-        # Basic validation: must contain @ or be a domain-like string
         if "@" not in sender and "." not in sender:
             raise ValueError("sender must be a valid email address or domain")
         return sender
@@ -123,12 +121,24 @@ class MarkReadRequest(BaseModel):
 
 
 class DeleteScanRequest(BaseModel):
-    """Request to scan senders for deletion."""
+    """Request to scan senders or repeated subjects for deletion."""
 
     limit: int = Field(default=1000, ge=1, le=10000, description="Max emails to scan")
+    group_by: str = Field(
+        default="sender",
+        description="Group results by 'sender' or 'subject'",
+    )
     filters: Optional[FiltersModel] = Field(
         default=None, description="Gmail filter options"
     )
+
+    @field_validator("group_by")
+    @classmethod
+    def validate_group_by(cls, v) -> str:
+        val = (v or "sender").lower().strip()
+        if val not in ("sender", "subject"):
+            raise ValueError("group_by must be 'sender' or 'subject'")
+        return val
 
 
 class UnsubscribeRequest(BaseModel):
@@ -139,15 +149,15 @@ class UnsubscribeRequest(BaseModel):
 
 
 class DeleteEmailsRequest(BaseModel):
-    """Request to delete emails from a sender."""
+    """Request to delete emails from a sender or repeated subject group."""
 
-    sender: str = Field(default="", description="Sender email address")
+    sender: str = Field(default="", description="Sender email or subject group key")
 
 
 class DeleteBulkRequest(BaseModel):
-    """Request to delete emails from multiple senders."""
+    """Request to delete emails from multiple senders or subject groups."""
 
-    senders: list[str] = Field(default=[], description="List of sender addresses")
+    senders: list[str] = Field(default=[], description="List of sender addresses or keys")
 
 
 class DownloadEmailsRequest(BaseModel):
@@ -190,6 +200,7 @@ class MarkImportantRequest(BaseModel):
         default=True, description="True to mark important, False to unmark"
     )
 
+
 class SwitchAccountRequest(BaseModel):
     """Request to switch the active Gmail account."""
 
@@ -202,6 +213,7 @@ class RemoveAccountRequest(BaseModel):
     email: Optional[str] = Field(
         default=None, description="Email address to remove (defaults to active account)"
     )
+
 
 # ----- Response Models -----
 
