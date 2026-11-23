@@ -31,7 +31,7 @@ def _format_http_error(err: HttpError) -> str:
     return str(err)
 
 
-def analyze_storage(min_email_mb: int = 5) -> dict:
+def analyze_storage(min_email_mb: float = 5) -> dict:
     """Analyze Drive quota, largest owned Drive files, hidden Drive usage, and largest GMail emails."""
     drive_service, drive_err = get_drive_service()
     if drive_err == "NEEDS_DRIVE_SCOPE":
@@ -91,7 +91,6 @@ def analyze_storage(min_email_mb: int = 5) -> dict:
 
             hit_zero = False
             for f in files:
-                # Strictly require ownership by me
                 if f.get("ownedByMe") is not True:
                     continue
 
@@ -133,9 +132,15 @@ def analyze_storage(min_email_mb: int = 5) -> dict:
         )
         gmail_photos_other_bytes = max(0, total_usage - usage_in_drive)
 
-        # 3. GMail Trash & Spam counts (2 tiny 1-unit calls)
+        # 3. GMail total messages, Trash & Spam counts (3 tiny 1-unit calls)
+        gmail_total_messages = 0
         gmail_trash_count = 0
         gmail_spam_count = 0
+        try:
+            profile = gmail_service.users().getProfile(userId="me").execute()
+            gmail_total_messages = int(profile.get("messagesTotal") or 0)
+        except Exception:
+            pass
         try:
             trash_label = (
                 gmail_service.users().labels().get(userId="me", id="TRASH").execute()
@@ -151,13 +156,19 @@ def analyze_storage(min_email_mb: int = 5) -> dict:
         except Exception:
             pass
 
-        # 4. Largest GMail emails (e.g. larger:5M, top 100)
-        min_email_mb = max(1, min(int(min_email_mb), 50))
+        # 4. Largest GMail emails (supports 0.5 MB = 500K up to 50M, top 200)
+        min_email_mb = max(0.5, min(float(min_email_mb), 50.0))
+        size_query = (
+            f"larger:{int(min_email_mb * 1000)}K"
+            if min_email_mb < 1
+            else f"larger:{int(min_email_mb)}M"
+        )
+
         large_emails = []
         msg_list = execute_with_backoff(
             lambda: gmail_service.users()
             .messages()
-            .list(userId="me", q=f"larger:{min_email_mb}M", maxResults=100)
+            .list(userId="me", q=size_query, maxResults=200)
             .execute()
         )
         msg_refs = msg_list.get("messages", [])
@@ -201,6 +212,8 @@ def analyze_storage(min_email_mb: int = 5) -> dict:
 
             large_emails.sort(key=lambda x: x["size"], reverse=True)
 
+        large_emails_total_size = sum(e["size"] for e in large_emails)
+
         return {
             "needs_drive_scope": False,
             "email": user_info.get("emailAddress"),
@@ -217,8 +230,10 @@ def analyze_storage(min_email_mb: int = 5) -> dict:
                 "gmail_photos_other": gmail_photos_other_bytes,
             },
             "gmail_counts": {
+                "total_messages": gmail_total_messages,
                 "trash_messages": gmail_trash_count,
                 "spam_messages": gmail_spam_count,
+                "large_emails_total_size": large_emails_total_size,
             },
             "drive_files": all_drive_files[:100],
             "large_emails": large_emails,
