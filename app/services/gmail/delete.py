@@ -6,20 +6,24 @@ Functions for deleting emails and scanning senders.
 
 import logging
 import re
-import time
 from collections import defaultdict
 from typing import Optional
 
 from app.core import state
 from app.services.auth import get_gmail_service
-from app.services.gmail.helpers import build_gmail_query, get_sender_info, get_subject
+from app.services.gmail.helpers import (
+    build_gmail_query,
+    execute_batch_with_retry,
+    execute_with_backoff,
+    get_sender_info,
+    get_subject,
+)
 
 logger = logging.getLogger(__name__)
 
 
 def scan_senders_for_delete(limit: int = 1000, filters: Optional[dict] = None):
-    """Scan emails and group by sender for bulk delete."""
-    # Validate input
+    """Scan emails and group by sender for bulk delete (with rate-limit protection)."""
     if limit <= 0:
         state.reset_delete_scan()
         state.delete_scan_status["error"] = "Limit must be greater than 0"
@@ -40,26 +44,29 @@ def scan_senders_for_delete(limit: int = 1000, filters: Optional[dict] = None):
 
         query = build_gmail_query(filters)
 
-        results = (
-            service.users()
+        results = execute_with_backoff(
+            lambda: service.users()
             .messages()
             .list(userId="me", maxResults=min(limit, 500), q=query or None)
-            .execute()
+            .execute(),
+            status_dict=state.delete_scan_status,
         )
 
         messages = results.get("messages", [])
 
         while "nextPageToken" in results and len(messages) < limit:
-            results = (
-                service.users()
+            page_token = results["nextPageToken"]
+            results = execute_with_backoff(
+                lambda pt=page_token: service.users()
                 .messages()
                 .list(
                     userId="me",
                     maxResults=min(limit - len(messages), 500),
-                    pageToken=results["nextPageToken"],
+                    pageToken=pt,
                     q=query or None,
                 )
-                .execute()
+                .execute(),
+                status_dict=state.delete_scan_status,
             )
             messages.extend(results.get("messages", []))
 
@@ -73,7 +80,6 @@ def scan_senders_for_delete(limit: int = 1000, filters: Optional[dict] = None):
 
         state.delete_scan_status["message"] = f"Scanning {total} emails..."
 
-        # Group by sender using Gmail Batch API
         sender_counts: dict[str, dict] = defaultdict(
             lambda: {
                 "count": 0,
@@ -86,23 +92,14 @@ def scan_senders_for_delete(limit: int = 1000, filters: Optional[dict] = None):
                 "total_size": 0,
             }
         )
-        processed = 0
-        batch_size = 100
 
-        def process_message(request_id, response, exception) -> None:
-            nonlocal processed
-            processed += 1
-
-            if exception:
-                return
-
+        def process_message(response: dict) -> None:
             headers = response.get("payload", {}).get("headers", [])
             sender_name, sender_email = get_sender_info(headers)
             subject = get_subject(headers)
             msg_id = response.get("id", "")
             size_estimate = response.get("sizeEstimate", 0)
 
-            # Extract date from headers
             email_date = None
             for header in headers:
                 if header["name"].lower() == "date":
@@ -118,40 +115,35 @@ def scan_senders_for_delete(limit: int = 1000, filters: Optional[dict] = None):
                 if len(sender_counts[sender_email]["subjects"]) < 3:
                     sender_counts[sender_email]["subjects"].append(subject)
 
-                # Track first and last dates
                 if email_date:
                     if sender_counts[sender_email]["first_date"] is None:
                         sender_counts[sender_email]["first_date"] = email_date
                     sender_counts[sender_email]["last_date"] = email_date
 
-        # Execute batch requests
-        for i in range(0, len(messages), batch_size):
-            batch_ids = messages[i : i + batch_size]
-            batch = service.new_batch_http_request(callback=process_message)
+        def update_progress(completed: int, total_count: int) -> None:
+            state.delete_scan_status["progress"] = int(completed / total_count * 100)
+            state.delete_scan_status["message"] = (
+                f"Scanned {completed}/{total_count} emails"
+            )
 
-            for msg_data in batch_ids:
-                batch.add(
-                    service.users()
-                    .messages()
-                    .get(
-                        userId="me",
-                        id=msg_data["id"],
-                        format="metadata",
-                        metadataHeaders=["From", "Subject", "Date"],
-                    )
-                )
+        execute_batch_with_retry(
+            service=service,
+            items=messages,
+            build_request=lambda msg_data: service.users()
+            .messages()
+            .get(
+                userId="me",
+                id=msg_data["id"],
+                format="metadata",
+                metadataHeaders=["From", "Subject", "Date"],
+            ),
+            on_success=process_message,
+            status_dict=state.delete_scan_status,
+            batch_size=50,
+            batch_delay=1.0,
+            progress_cb=update_progress,
+        )
 
-            batch.execute()
-
-            progress = int((i + len(batch_ids)) / total * 100)
-            state.delete_scan_status["progress"] = progress
-            state.delete_scan_status["message"] = f"Scanned {processed}/{total} emails"
-
-            # Rate limiting
-            if (i // batch_size + 1) % 5 == 0:
-                time.sleep(0.3)
-
-        # Sort by count
         sorted_senders = sorted(
             [{"email": k, **v} for k, v in sender_counts.items()],
             key=lambda x: x["count"],
@@ -187,11 +179,8 @@ def delete_emails_by_sender(sender: str) -> dict:
             "message": "No sender specified",
         }
 
-    # Validate sender format - must be a valid email address or domain
     sender = sender.strip()
-    # Email format: user@domain.tld
     email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-    # Domain format: domain.tld (at least one dot, valid domain structure)
     domain_pattern = r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$"
 
     if not (re.match(email_pattern, sender) or re.match(domain_pattern, sender)):
@@ -202,7 +191,6 @@ def delete_emails_by_sender(sender: str) -> dict:
             "message": "Invalid sender format. Must be a valid email address or domain.",
         }
 
-    # Get size info from cached results before deleting
     size_freed = 0
     for r in state.delete_scan_results:
         if r.get("email") == sender:
@@ -214,10 +202,9 @@ def delete_emails_by_sender(sender: str) -> dict:
         return {"success": False, "deleted": 0, "size_freed": 0, "message": error}
 
     try:
-        # Find all emails from sender
         query = f"from:{sender}"
-        results = (
-            service.users()
+        results = execute_with_backoff(
+            lambda: service.users()
             .messages()
             .list(userId="me", q=query, maxResults=500)
             .execute()
@@ -225,14 +212,15 @@ def delete_emails_by_sender(sender: str) -> dict:
         messages = results.get("messages", [])
 
         while "nextPageToken" in results:
-            results = (
-                service.users()
+            page_token = results["nextPageToken"]
+            results = execute_with_backoff(
+                lambda pt=page_token: service.users()
                 .messages()
                 .list(
                     userId="me",
                     q=query,
                     maxResults=500,
-                    pageToken=results["nextPageToken"],
+                    pageToken=pt,
                 )
                 .execute()
             )
@@ -246,19 +234,20 @@ def delete_emails_by_sender(sender: str) -> dict:
                 "message": "No emails found",
             }
 
-        # Batch delete (move to trash)
         ids = [msg["id"] for msg in messages]
         batch_size = 100
         deleted = 0
 
         for i in range(0, len(ids), batch_size):
             batch = ids[i : i + batch_size]
-            service.users().messages().batchModify(
-                userId="me", body={"ids": batch, "addLabelIds": ["TRASH"]}
-            ).execute()
+            execute_with_backoff(
+                lambda b=batch: service.users()
+                .messages()
+                .batchModify(userId="me", body={"ids": b, "addLabelIds": ["TRASH"]})
+                .execute()
+            )
             deleted += len(batch)
 
-        # Remove sender from cached results
         state.delete_scan_results = [
             r for r in state.delete_scan_results if r.get("email") != sender
         ]
@@ -296,8 +285,6 @@ def delete_emails_bulk(senders: list[str]) -> dict:
         else:
             errors.append(f"{sender}: {result['message']}")
 
-    # Note: delete_emails_by_sender already removes each sender from cached results
-
     if errors:
         return {
             "success": len(errors) < len(senders),
@@ -322,13 +309,9 @@ def delete_emails_bulk(senders: list[str]) -> dict:
 
 
 def delete_emails_bulk_background(senders: list[str]) -> None:
-    """Delete emails from multiple senders with progress updates (background task).
-
-    Optimized to collect all message IDs first, then batch delete in larger chunks.
-    """
+    """Delete emails from multiple senders with progress updates (background task)."""
     state.reset_delete_bulk()
 
-    # Validate input
     if not senders or not isinstance(senders, list):
         state.delete_bulk_status["done"] = True
         state.delete_bulk_status["error"] = "No senders specified"
@@ -344,38 +327,38 @@ def delete_emails_bulk_background(senders: list[str]) -> None:
         state.delete_bulk_status["error"] = error
         return
 
-    # Phase 1: Collect all message IDs from all senders
     all_message_ids = []
     errors = []
 
     for i, sender in enumerate(senders):
         state.delete_bulk_status["current_sender"] = i + 1
-        state.delete_bulk_status["progress"] = int(
-            (i / total_senders) * 40
-        )  # 0-40% for collecting
+        state.delete_bulk_status["progress"] = int((i / total_senders) * 40)
         state.delete_bulk_status["message"] = f"Finding emails from {sender}..."
 
         try:
             query = f"from:{sender}"
-            results = (
-                service.users()
+            results = execute_with_backoff(
+                lambda q=query: service.users()
                 .messages()
-                .list(userId="me", q=query, maxResults=500)
-                .execute()
+                .list(userId="me", q=q, maxResults=500)
+                .execute(),
+                status_dict=state.delete_bulk_status,
             )
             messages = results.get("messages", [])
 
             while "nextPageToken" in results:
-                results = (
-                    service.users()
+                page_token = results["nextPageToken"]
+                results = execute_with_backoff(
+                    lambda q=query, pt=page_token: service.users()
                     .messages()
                     .list(
                         userId="me",
-                        q=query,
+                        q=q,
                         maxResults=500,
-                        pageToken=results["nextPageToken"],
+                        pageToken=pt,
                     )
-                    .execute()
+                    .execute(),
+                    status_dict=state.delete_bulk_status,
                 )
                 messages.extend(results.get("messages", []))
 
@@ -389,22 +372,24 @@ def delete_emails_bulk_background(senders: list[str]) -> None:
         state.delete_bulk_status["message"] = "No emails found to delete"
         return
 
-    # Phase 2: Batch delete all collected IDs (larger batches = fewer API calls)
     total_emails = len(all_message_ids)
     state.delete_bulk_status["message"] = f"Deleting {total_emails} emails..."
 
-    batch_size = 1000  # Gmail allows up to 1000 per batchModify
+    batch_size = 1000
     deleted = 0
 
     try:
         for i in range(0, total_emails, batch_size):
             batch = all_message_ids[i : i + batch_size]
-            service.users().messages().batchModify(
-                userId="me", body={"ids": batch, "addLabelIds": ["TRASH"]}
-            ).execute()
+            execute_with_backoff(
+                lambda b=batch: service.users()
+                .messages()
+                .batchModify(userId="me", body={"ids": b, "addLabelIds": ["TRASH"]})
+                .execute(),
+                status_dict=state.delete_bulk_status,
+            )
             deleted += len(batch)
             state.delete_bulk_status["deleted_count"] = deleted
-            # Progress: 40-100% for deleting
             state.delete_bulk_status["progress"] = 40 + int(
                 (deleted / total_emails) * 60
             )
@@ -414,12 +399,10 @@ def delete_emails_bulk_background(senders: list[str]) -> None:
     except Exception as e:
         errors.append(f"Batch delete error: {str(e)}")
 
-    # Remove deleted senders from cached scan results
     state.delete_scan_results = [
         r for r in state.delete_scan_results if r.get("email") not in senders
     ]
 
-    # Done
     state.delete_bulk_status["progress"] = 100
     state.delete_bulk_status["done"] = True
     state.delete_bulk_status["deleted_count"] = deleted
