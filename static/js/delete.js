@@ -6,11 +6,6 @@ window.GmailCleaner = window.GmailCleaner || {};
 
 GmailCleaner.Delete = {
     formatDateRange(firstDate, lastDate) {
-        /**
-         * Parse RFC 2822 date string and format as MM/DD/YYYY
-         * Example: "Wed, 15 Nov 2025 10:30:00 +0000" -> "11/15/2025"
-         * Returns date range from oldest to newest
-         */
         const formatDate = (dateStr) => {
             try {
                 const date = new Date(dateStr);
@@ -30,7 +25,6 @@ GmailCleaner.Delete = {
         if (!first || !last) return '';
         if (first === last) return first;
 
-        // Compare dates to determine order (oldest to newest)
         const firstDateObj = new Date(firstDate);
         const lastDateObj = new Date(lastDate);
 
@@ -67,6 +61,7 @@ GmailCleaner.Delete = {
         progressCard.classList.remove('hidden');
 
         const limit = document.getElementById('deleteScanLimit').value;
+        const groupBy = document.getElementById('deleteGroupBy')?.value || 'sender';
         const filters = GmailCleaner.Filters.get();
 
         try {
@@ -75,6 +70,7 @@ GmailCleaner.Delete = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     limit: parseInt(limit),
+                    group_by: groupBy,
                     filters: filters
                 })
             });
@@ -128,7 +124,7 @@ GmailCleaner.Delete = {
             <svg viewBox="0 0 24 24" width="18" height="18">
                 <path fill="currentColor" d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
             </svg>
-            Scan Senders
+            Scan Emails
         `;
     },
 
@@ -144,13 +140,14 @@ GmailCleaner.Delete = {
         if (GmailCleaner.deleteResults.length === 0) {
             resultsSection.classList.add('hidden');
             noResults.classList.remove('hidden');
-            this.setActionButtonsEnabled(false);
+            this.setActionButtonsEnabled(false, false);
             return;
         }
 
+        const isSubjectMode = GmailCleaner.deleteResults[0]?.group_type === 'subject';
         resultsSection.classList.remove('hidden');
         noResults.classList.add('hidden');
-        this.setActionButtonsEnabled(true);
+        this.setActionButtonsEnabled(true, isSubjectMode);
 
         GmailCleaner.deleteResults.forEach((r, i) => {
             const item = document.createElement('div');
@@ -158,6 +155,7 @@ GmailCleaner.Delete = {
 
             const dateRange = this.formatDateRange(r.first_date, r.last_date);
             const dateRangeDisplay = dateRange ? `<div class="result-date-range">${dateRange}</div>` : '';
+            const title = r.display_title || r.email;
 
             item.innerHTML = `
                 <label class="checkbox-wrapper result-checkbox">
@@ -165,7 +163,7 @@ GmailCleaner.Delete = {
                     <span class="checkmark"></span>
                 </label>
                 <div class="result-content">
-                    <div class="result-sender">${GmailCleaner.UI.escapeHtml(r.email)}</div>
+                    <div class="result-sender">${GmailCleaner.UI.escapeHtml(title)}</div>
                     <div class="result-subject">${GmailCleaner.UI.escapeHtml(r.subjects[0] || 'No subject')}</div>
                     <div class="result-meta">
                         ${dateRangeDisplay}
@@ -182,20 +180,23 @@ GmailCleaner.Delete = {
         });
     },
 
-    setActionButtonsEnabled(enabled) {
-        const buttons = [
+    setActionButtonsEnabled(enabled, subjectMode = false) {
+        const senderOnlyButtons = [
             'applyLabelBtn',
             'archiveBtn',
             'importantBtn',
-            'downloadBtn',
-            'deleteSelectedBtn'
+            'downloadBtn'
         ];
-        buttons.forEach(id => {
+        senderOnlyButtons.forEach(id => {
             const btn = document.getElementById(id);
             if (btn) {
-                btn.disabled = !enabled;
+                btn.disabled = !enabled || subjectMode;
             }
         });
+        const deleteBtn = document.getElementById('deleteSelectedBtn');
+        if (deleteBtn) {
+            deleteBtn.disabled = !enabled;
+        }
     },
 
     toggleSelectAll() {
@@ -208,8 +209,9 @@ GmailCleaner.Delete = {
     async deleteSenderEmails(index) {
         const r = GmailCleaner.deleteResults[index];
         const btn = document.getElementById('delete-' + index);
+        const title = r.display_title || r.email;
 
-        if (!confirm(`Delete ALL ${r.count} emails from ${r.email}?\n\nThis will move them to Trash.`)) {
+        if (!confirm(`Delete ALL ${r.count} emails for "${title}"?\n\nThis will move them to Trash.`)) {
             return;
         }
 
@@ -256,7 +258,7 @@ GmailCleaner.Delete = {
     async deleteSelected() {
         const checkboxes = document.querySelectorAll('.delete-cb:checked');
         if (checkboxes.length === 0) {
-            alert('Please select at least one sender to delete emails from.');
+            alert('Please select at least one item to delete emails from.');
             return;
         }
 
@@ -269,11 +271,13 @@ GmailCleaner.Delete = {
             senderEmails.push(r.email);
         });
 
-        if (!confirm(`Delete ${totalEmails} emails from ${checkboxes.length} senders?\n\nThis will move them to Trash.`)) {
+        const isSubjectMode = GmailCleaner.deleteResults[0]?.group_type === 'subject';
+        const unit = isSubjectMode ? 'repeated subject groups' : 'senders';
+
+        if (!confirm(`Delete ${totalEmails} emails across ${checkboxes.length} ${unit}?\n\nThis will move them to Trash.`)) {
             return;
         }
 
-        // Show bulk delete overlay with progress bar
         this.showDeleteOverlay(checkboxes.length, totalEmails);
 
         checkboxes.forEach(cb => {
@@ -292,14 +296,12 @@ GmailCleaner.Delete = {
         });
 
         try {
-            // Start the background task
             await fetch('/api/delete-emails-bulk', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ senders: senderEmails })
             });
 
-            // Poll for progress
             this.pollDeleteProgress(checkboxes);
         } catch (error) {
             this.hideDeleteOverlay();
@@ -312,7 +314,6 @@ GmailCleaner.Delete = {
             const response = await fetch('/api/delete-bulk-status');
             const status = await response.json();
 
-            // Update progress bar in overlay
             this.updateDeleteOverlay(status);
 
             if (status.done) {
@@ -357,7 +358,6 @@ GmailCleaner.Delete = {
     },
 
     showDeleteOverlay(senderCount, emailCount) {
-        // Remove any existing overlay
         this.hideDeleteOverlay();
 
         const overlay = document.createElement('div');
@@ -373,7 +373,7 @@ GmailCleaner.Delete = {
                     <div class="delete-progress-bar" id="deleteBulkProgressBar"></div>
                 </div>
                 <p id="deleteBulkProgressText">Starting deletion...</p>
-                <p class="delete-stats" id="deleteBulkStats">0/${senderCount} senders | 0 emails deleted</p>
+                <p class="delete-stats" id="deleteBulkStats">0/${senderCount} groups | 0 emails deleted</p>
             </div>
         `;
         overlay.dataset.totalSenders = senderCount;
@@ -395,10 +395,8 @@ GmailCleaner.Delete = {
         if (stats && overlay) {
             const totalSenders = overlay.dataset.totalSenders || status.total_senders;
             if (status.progress <= 40) {
-                // Phase 1: Collecting emails
-                stats.textContent = `Scanning ${status.current_sender || 0}/${totalSenders} senders...`;
+                stats.textContent = `Scanning ${status.current_sender || 0}/${totalSenders}...`;
             } else {
-                // Phase 2: Deleting
                 stats.textContent = `${status.deleted_count || 0} emails deleted`;
             }
         }
@@ -411,7 +409,6 @@ GmailCleaner.Delete = {
         }
     },
 
-    // Download emails functionality
     async downloadSelected() {
         const checkboxes = document.querySelectorAll('.delete-cb:checked');
         if (checkboxes.length === 0) {
@@ -428,18 +425,15 @@ GmailCleaner.Delete = {
             senderEmails.push(r.email);
         });
 
-        // Show download overlay
         this.showDownloadOverlay(checkboxes.length, totalEmails);
 
         try {
-            // Start background download
             await fetch('/api/download-emails', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ senders: senderEmails })
             });
 
-            // Poll for progress
             this.pollDownloadProgress();
         } catch (error) {
             this.hideDownloadOverlay();
@@ -456,7 +450,6 @@ GmailCleaner.Delete = {
 
             if (status.done) {
                 if (!status.error) {
-                    // Trigger CSV download
                     window.location.href = '/api/download-csv';
                     setTimeout(() => {
                         this.hideDownloadOverlay();
