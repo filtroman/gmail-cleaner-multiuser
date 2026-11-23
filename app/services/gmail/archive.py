@@ -1,5 +1,5 @@
 """
-Gmail Archive Operations
+GMail Archive Operations
 ------------------------
 Functions for archiving emails (removing from inbox).
 """
